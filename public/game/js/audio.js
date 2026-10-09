@@ -1,9 +1,152 @@
-// Procedural WebAudio sound: engines, sirens, guns, explosions.
-import { G, clamp } from './core.js';
+// Game audio. Recorded samples (see assets/CREDITS.md) for guns, engines, crashes,
+// footsteps and ambience, an in-car radio with open-licensed music, and the
+// original WebAudio synthesis as a fallback (and for the police siren).
+import { G, clamp, emit } from './core.js';
 
 let ctx = null, master, noiseBuf;
 let eng, siren, rotor, wind;
 export let muted = false;
+
+// ---------------------------------------------------------------- samples
+const SFX_DIR = 'assets/sfx/';
+const SAMPLE_NAMES = [
+  'smg', 'rifle', 'shotgun', 'rpg', 'explosion', 'explosion2', 'punch', 'hit', 'empty', 'reload', 'weapon_switch',
+  'pickup', 'weapon_pickup', 'health', 'armor', 'cash', 'crash1', 'crash2', 'crash3', 'impact', 'horn', 'horn2',
+  'splash', 'step1', 'step2', 'step3', 'step4', 'fall', 'jump', 'land', 'ric1', 'ric2',
+  'engine', 'engine_bike', 'engine_truck', 'skid', 'ambience', 'aircraft', 'jet',
+];
+const rawBufs = new Map(); // fetched bytes, decoded once the AudioContext exists
+const bufs = new Map();
+export async function loadSounds() {
+  await Promise.all(
+    SAMPLE_NAMES.map((n) =>
+      fetch(SFX_DIR + n + '.mp3')
+        .then((r) => (r.ok ? r.arrayBuffer() : null))
+        .then((b) => b && rawBufs.set(n, b))
+        .catch(() => {})
+    )
+  );
+}
+function decodeAll() {
+  for (const [n, b] of rawBufs) {
+    ctx.decodeAudioData(b.slice(0)).then((buf) => bufs.set(n, buf)).catch(() => {});
+  }
+}
+const pickOf = (names) => {
+  const have = names.filter((n) => bufs.has(n));
+  return have.length ? have[Math.floor(Math.random() * have.length)] : null;
+};
+function pan(pos) {
+  if (!pos || !G.camera) return 0;
+  const c = G.camera.position;
+  const rx = -Math.cos(G.camYaw), rz = Math.sin(G.camYaw);
+  const dx = pos.x - c.x, dz = pos.z - c.z;
+  const d = Math.hypot(dx, dz) || 1;
+  return clamp(((dx * rx + dz * rz) / d) * 0.8, -0.8, 0.8);
+}
+// Play a one-shot sample. Returns false if it isn't loaded (caller falls back to synthesis).
+function play(names, vol = 1, rate = 1, pos = null) {
+  const n = pickOf(Array.isArray(names) ? names : [names]);
+  if (!n) return false;
+  const v = distVol(pos) * vol;
+  if (v <= 0.005) return true;
+  const src = ctx.createBufferSource();
+  src.buffer = bufs.get(n);
+  src.playbackRate.value = rate * (0.96 + Math.random() * 0.08);
+  const g = ctx.createGain();
+  g.gain.value = v;
+  src.connect(g);
+  let out = g;
+  if (ctx.createStereoPanner && pos) {
+    const p = ctx.createStereoPanner();
+    p.pan.value = pan(pos);
+    g.connect(p);
+    out = p;
+  }
+  out.connect(master);
+  src.start();
+  return true;
+}
+// A looping sample voice whose buffer, rate and volume can change every frame.
+function makeLoop() {
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  gain.connect(master);
+  return { gain, src: null, name: null };
+}
+function loopSet(L, name, vol, rate) {
+  if (L.name !== name) {
+    if (L.src) { try { L.src.stop(); } catch (e) { /* already stopped */ } }
+    L.src = null;
+    L.name = name;
+    if (name && bufs.has(name)) {
+      const b = bufs.get(name);
+      const s = ctx.createBufferSource();
+      s.buffer = b;
+      s.loop = true;
+      // skip mp3 encoder padding so the loop is seamless
+      s.loopStart = Math.min(0.06, b.duration * 0.1);
+      s.loopEnd = Math.max(s.loopStart + 0.05, b.duration - 0.06);
+      s.connect(L.gain);
+      s.start(0, s.loopStart);
+      L.src = s;
+    }
+  }
+  const t = ctx.currentTime;
+  L.gain.gain.setTargetAtTime(L.src ? vol : 0, t, 0.08);
+  if (L.src) L.src.playbackRate.setTargetAtTime(rate, t, 0.05);
+  return !!L.src;
+}
+let engLoop, skidLoop, ambLoop;
+
+// ---------------------------------------------------------------- radio
+export const STATIONS = [
+  { name: 'Neon 96.4', file: 'neon', note: 'Synth' },
+  { name: 'Kojin FM', file: 'kojinsmokin', note: 'Funk' },
+  { name: 'Chip 64', file: 'sixtyfour', note: 'Chiptune' },
+  { name: "Go Get 'Em Radio", file: 'gogetem', note: 'Rock' },
+  { name: 'Ninesix Beats', file: 'ninesix', note: 'Electronic' },
+  { name: 'The Comeback', file: 'the_comeback', note: 'Groove' },
+];
+let station = Math.floor(Math.random() * STATIONS.length);
+const radioEls = new Map();
+const radioEpoch = performance.now() - Math.random() * 600000;
+let radioOn = false;
+export function radioNext() {
+  station = station + 1 >= STATIONS.length ? -1 : station + 1;
+  emit('radio', station < 0 ? 'Radio off' : STATIONS[station].name, station < 0 ? '' : STATIONS[station].note);
+  radioOn = false;
+}
+export function currentStation() {
+  return station < 0 ? null : STATIONS[station];
+}
+function radioEl(i) {
+  let a = radioEls.get(i);
+  if (!a) {
+    a = new Audio('assets/music/' + STATIONS[i].file + '.mp3');
+    a.loop = true;
+    a.preload = 'none';
+    a.volume = 0.42;
+    radioEls.set(i, a);
+  }
+  return a;
+}
+function updateRadio() {
+  const v = G.player && G.player.vehicle;
+  const want = !!v && !v.dead && v.type !== 'bicycle' && G.state === 'play' && !muted && station >= 0;
+  for (const [i, a] of radioEls) if ((!want || i !== station) && !a.paused) a.pause();
+  if (!want) { radioOn = false; return; }
+  const a = radioEl(station);
+  if (a.paused) {
+    // stations keep "broadcasting" while you're not listening
+    const live = () => { if (a.duration) a.currentTime = ((performance.now() - radioEpoch) / 1000) % a.duration; };
+    if (a.readyState >= 1) live();
+    else a.addEventListener('loadedmetadata', live, { once: true });
+    a.play().catch(() => {});
+    if (!radioOn) emit('radio', STATIONS[station].name, STATIONS[station].note);
+    radioOn = true;
+  }
+}
 
 export function initAudio() {
   if (ctx) { ctx.resume(); return; }
@@ -15,6 +158,10 @@ export function initAudio() {
   master = ctx.createGain();
   master.gain.value = 0.6;
   master.connect(ctx.destination);
+  decodeAll();
+  engLoop = makeLoop();
+  skidLoop = makeLoop();
+  ambLoop = makeLoop();
   noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -84,6 +231,11 @@ export function initAudio() {
 export function setMuted(m) {
   muted = m;
   if (master) master.gain.value = m ? 0 : 0.6;
+  if (m) for (const a of radioEls.values()) a.pause();
+}
+// pause the radio when the game is paused or a menu is open
+export function pauseRadio() {
+  for (const a of radioEls.values()) a.pause();
 }
 
 function distVol(pos) {
@@ -127,8 +279,19 @@ function tone(freq, dur, vol, type = 'sine', to = null, delay = 0) {
   o.stop(t + dur + 0.05);
 }
 
+const SAMPLE_FOR = {
+  pistol: [['smg'], 0.95, 0.78], smg: [['smg'], 0.8, 1.05], rifle: [['rifle'], 0.9, 1], shotgun: [['shotgun'], 1, 1],
+  rpg: [['rpg'], 1, 1], explosion: [['explosion', 'explosion2'], 1.2, 1], punch: [['punch'], 0.9, 1], hit: [['hit'], 0.9, 1],
+  empty: [['empty'], 0.7, 1], reload: [['reload'], 0.8, 1], crash: [['crash1', 'crash2', 'crash3', 'impact'], 0.9, 1],
+  horn: [['horn', 'horn2'], 0.6, 1], pickup: [['pickup'], 0.8, 1], weapon_pickup: [['weapon_pickup'], 0.8, 1],
+  health: [['health'], 0.8, 1], armor: [['armor'], 0.8, 1], cash: [['cash'], 0.7, 1], splash: [['splash'], 0.9, 1],
+  step: [['step1', 'step2', 'step3', 'step4'], 0.35, 1], jump: [['jump'], 0.4, 1], land: [['land'], 0.5, 1],
+  fall: [['fall'], 0.8, 1], ric: [['ric1', 'ric2'], 0.5, 1], weapon_switch: [['weapon_switch'], 0.6, 1],
+};
 export function sfx(name, pos = null) {
   if (!ctx || muted) return;
+  const smp = SAMPLE_FOR[name];
+  if (smp && play(smp[0], smp[1], smp[2], pos)) return;
   const v = distVol(pos);
   if (v <= 0.01) return;
   switch (name) {
@@ -156,8 +319,9 @@ export function sfx(name, pos = null) {
   }
 }
 
+let stepT = 0;
 export function updateAudio(dt) {
-  if (!ctx) return;
+  if (!ctx) { return; }
   const t = ctx.currentTime;
   const P = G.player;
   const v = P && P.vehicle;
@@ -189,6 +353,38 @@ export function updateAudio(dt) {
       rGain = Math.max(rGain, clamp(1 - d / 250, 0, 1) * 0.25 * h.rotor);
     }
   }
+  // recorded engine loop (falls back to the oscillators when unavailable)
+  let sampleEngine = false;
+  if (v && !v.dead && G.state === 'play') {
+    const heavy = /truck|bus|garbage|firetruck|tractor/.test(v.type);
+    const name = v.kind === 'bike' ? (v.type === 'bicycle' ? null : 'engine_bike') : v.kind === 'heli' ? 'aircraft' : v.kind === 'plane' ? (v.type === 'jet' ? 'jet' : 'aircraft') : heavy ? 'engine_truck' : 'engine';
+    let rate = 1, vol = 0;
+    if (v.kind === 'heli') { rate = 0.55 + v.rotor * 0.5; vol = v.rotor * 0.5; }
+    else if (v.kind === 'plane') { rate = 0.6 + v.throttleLevel * 0.6 + v.speed / 200; vol = 0.2 + v.throttleLevel * 0.35; }
+    else { rate = eFreq / (v.kind === 'bike' ? 110 : 75); vol = 0.25 + Math.abs(v.input.throttle) * 0.25; }
+    sampleEngine = name ? loopSet(engLoop, name, vol, clamp(rate, 0.4, 2.6)) : loopSet(engLoop, null, 0, 1);
+    const slip = (v.kind === 'car' || v.kind === 'bike') && v.onGround ? clamp(((v.slip || 0) - 3) / 8, 0, 1) : 0;
+    loopSet(skidLoop, 'skid', slip * 0.45, 1);
+  } else {
+    if (engLoop) loopSet(engLoop, null, 0, 1);
+    if (skidLoop) loopSet(skidLoop, 'skid', 0, 1);
+  }
+  if (sampleEngine) { eGain = 0; if (v.kind === 'heli') rGain *= 0.35; }
+  // city ambience on foot or at low speed
+  if (ambLoop) {
+    const pp = P ? (v ? v.pos : P.pos) : null;
+    const inCity = pp && Math.abs(pp.x) < 900 && Math.abs(pp.z) < 900;
+    loopSet(ambLoop, 'ambience', G.state === 'play' && inCity && (!v || v.speedAbs < 8) ? 0.22 : 0, 1);
+  }
+  // footsteps
+  if (P && !v && !P.dead && P.onGround && !P.swim && G.state === 'play') {
+    const sp = Math.hypot(P.vel.x, P.vel.z);
+    if (sp > 1) {
+      stepT -= dt * sp;
+      if (stepT <= 0) { stepT = 2.4; sfx('step'); }
+    }
+  }
+  updateRadio();
   eng.o1.frequency.setTargetAtTime(eFreq, t, 0.05);
   eng.o2.frequency.setTargetAtTime(eFreq * 0.5, t, 0.05);
   eng.f.frequency.setTargetAtTime(300 + eFreq * 4, t, 0.05);

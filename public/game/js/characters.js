@@ -8,11 +8,11 @@ import { buildHuman, SKINS, SHIRTS, PANTS, HAIRS } from './models.js';
 import { spawn } from './fx.js';
 
 export function randomLook() {
-  return { skin: pick(SKINS), shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS) };
+  return { skin: pick(SKINS), shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS), variant: Math.floor(Math.random() * 4) };
 }
 export const COP_LOOK = { skin: 0xe0ac69, shirt: 0x1f3a68, pants: 0x14213d, hair: 0x0d1b33, cap: true };
 export function gangLook(g) {
-  return { skin: pick(SKINS), shirt: g.color, pants: pick([0x212121, 0x37474f, 0x1565c0]), hair: g.color, cap: Math.random() < 0.5 };
+  return { skin: pick(SKINS), shirt: g.color, pants: pick([0x212121, 0x37474f, 0x1565c0]), hair: g.color, cap: Math.random() < 0.5, tint: g.color };
 }
 
 const _c = { x: 0, z: 0 };
@@ -21,7 +21,7 @@ export class Ped {
   constructor(x, z, type = 'civ', look = randomLook()) {
     this.type = type;
     this.look = look;
-    this.m = buildHuman(look);
+    this.m = buildHuman(look, type);
     this.root = this.m.root;
     this.pos = new THREE.Vector3(x, groundHeight(x, z) + 0.02, z);
     this.vel = new THREE.Vector3();
@@ -77,12 +77,12 @@ export class Ped {
     this.dead = true;
     this.health = 0;
     this.deadT = 0;
-    this.m.gun.visible = false;
+    this.m.setGun(false);
     emit('pedKilled', this, attacker);
   }
 
   setWeaponVisible(v) {
-    this.m.gun.visible = v;
+    this.m.setGun(v);
   }
 
   // movement toward a direction with speed; handles collisions & ground
@@ -141,8 +141,10 @@ export class Ped {
   }
 
   animate(dt) {
-    const m = this.m;
     const r = this.root;
+    const P = this.poseP || (this.poseP = {});
+    P.legL = P.legR = P.kneeL = P.kneeR = P.armL = P.armR = P.lean = P.aimPitch = 0;
+    P.aim = P.lift = P.punch = P.sit = false;
     r.position.copy(this.pos);
     if (this.dead || this.ragdoll > 0) {
       if (this.onGround) {
@@ -154,10 +156,11 @@ export class Ped {
         r.rotation.x += this.spinX * dt;
         r.rotation.y = this.heading;
       }
-      m.armL.rotation.set(0, 0, 1.2);
-      m.armR.rotation.set(0, 0, -1.2);
-      m.legL.rotation.set(0, 0, 0.2);
-      m.legR.rotation.set(0, 0, -0.2);
+      P.lift = true;
+      P.legL = 0.25;
+      P.legR = -0.15;
+      P.kneeL = 0.3;
+      this.m.pose(P);
       return;
     }
     r.rotation.set(0, this.heading, 0, 'YXZ');
@@ -165,45 +168,45 @@ export class Ped {
     if (this.swim) {
       this.phase += dt * 5;
       r.position.y = WATER - 1.25;
-      m.armL.rotation.set(-2.5 + Math.sin(this.phase) * 0.8, 0, 0);
-      m.armR.rotation.set(-2.5 - Math.sin(this.phase) * 0.8, 0, 0);
-      m.legL.rotation.x = Math.sin(this.phase * 2) * 0.4;
-      m.legR.rotation.x = -Math.sin(this.phase * 2) * 0.4;
-      m.hips.rotation.x = 0;
+      P.lift = true;
+      P.armL = Math.sin(this.phase) * 0.8;
+      P.armR = -Math.sin(this.phase) * 0.8;
+      P.legL = Math.sin(this.phase * 2) * 0.4;
+      P.legR = -P.legL;
+      this.m.pose(P);
       return;
     }
     this.phase += dt * (sp * 1.9 + 0.01);
     const run = sp > 4.5;
     const amp = clamp(sp / 4, 0, 1) * (run ? 1.0 : 0.6);
     const s = Math.sin(this.phase);
-    m.legL.rotation.x = s * amp;
-    m.legR.rotation.x = -s * amp;
-    m.legL.rotation.z = m.legR.rotation.z = 0;
-    m.hips.position.y = 0.9 + Math.abs(Math.cos(this.phase)) * 0.05 * amp;
-    m.hips.rotation.x = run ? 0.15 : 0;
+    P.legL = s * amp;
+    P.legR = -s * amp;
+    // bend the knee of the trailing leg
+    P.kneeL = Math.max(0, -P.legL) * 1.3 + amp * 0.15;
+    P.kneeR = Math.max(0, -P.legR) * 1.3 + amp * 0.15;
+    P.lean = run ? 0.15 : 0;
     if (!this.onGround) {
-      m.legL.rotation.x = -0.6; m.legR.rotation.x = 0.3;
+      P.legL = 0.6; P.legR = -0.3; P.kneeL = 0.9; P.kneeR = 0.5;
     }
+    P.armL = -s * amp * 0.9;
+    P.armR = s * amp * 0.9;
     if (this.aim) {
-      m.armR.rotation.set(-Math.PI / 2 + (this.aimPitch || 0), 0, 0);
-      m.armL.rotation.set(-Math.PI / 2 + (this.aimPitch || 0) + 0.1, 0, -0.4);
-    } else if (this.state === 'flee' || this.state === 'panic') {
-      m.armL.rotation.set(-2.6 + s * 0.3, 0, -0.2);
-      m.armR.rotation.set(-2.6 - s * 0.3, 0, 0.2);
-    } else {
-      m.armL.rotation.set(-s * amp * 0.9, 0, 0.05);
-      m.armR.rotation.set(s * amp * 0.9, 0, -0.05);
-    }
+      P.aim = true;
+      P.aimPitch = this.aimPitch || 0;
+    } else if (this.state === 'flee' || this.state === 'panic') P.lift = true;
     if (this.punchT > 0) {
       this.punchT -= dt;
-      m.armR.rotation.set(-Math.PI / 2, 0, 0);
+      P.punch = true;
     }
     if (this.sitting) {
-      m.legL.rotation.x = m.legR.rotation.x = -1.4;
-      m.armL.rotation.set(-1.0, 0, 0);
-      m.armR.rotation.set(-1.0, 0, 0);
-      m.hips.position.y = 0.9;
+      P.sit = true;
+      P.legL = P.legR = 1.4;
+      P.kneeL = P.kneeR = 1.4;
+      P.armL = P.armR = 1.0;
+      P.aim = P.lift = false;
     }
+    this.m.pose(P);
   }
 
   // ---------------------------------------------------------------- AI

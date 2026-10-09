@@ -54,6 +54,10 @@
   #zone.show { opacity: 1; transform: none; }
   #vehname { position: absolute; right: 26px; bottom: 248px; font: 600 20px var(--ui); color: #b8e1ff; opacity: 0; transition: opacity .4s; letter-spacing: .08em; text-transform: uppercase; }
   #vehname.show { opacity: 1; }
+  #radio { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity .4s; }
+  #radio.show { opacity: 1; }
+  #radio .st { font: 400 34px var(--display); color: var(--gold); letter-spacing: .02em; }
+  #radio .gn { font: 600 13px var(--ui); letter-spacing: .16em; text-transform: uppercase; }
   #help { position: absolute; left: 22px; top: 18px; max-width: 380px; padding: 12px 14px; background: var(--panel); border-left: 3px solid var(--gold); font: 500 15px/1.45 var(--ui); }
   #help b { color: var(--gold); font-weight: 700; }
   #notify { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); display: grid; gap: 6px; justify-items: center; }
@@ -95,6 +99,7 @@
   .keys div { display: flex; gap: 10px; align-items: baseline; }
   kbd { font: 700 12px var(--ui); background: #24272d; border-bottom: 2px solid #000; padding: 2px 7px; color: var(--gold); min-width: 26px; text-align: center; white-space: nowrap; }
   .touchnote { font-size: 13px; color: var(--gold); }
+  .credits { font-size: 12px; line-height: 1.5; color: var(--muted); max-width: 70ch; }
 
   #pause { background: rgba(6,7,10,.78); }
   #pause .menubox { max-width: 720px; }
@@ -145,6 +150,7 @@
   <div id="speedowrap" hidden><canvas id="speedo" width="170" height="170"></canvas></div>
   <div id="zone" class="outline"></div>
   <div id="vehname" class="outline"></div>
+  <div id="radio" class="outline"></div>
   <div id="help" hidden></div>
   <div id="notify"></div>
   <div id="objective" hidden></div>
@@ -177,7 +183,7 @@
       <div><kbd>Space</kbd> Jump / handbrake</div>
       <div><kbd>R</kbd> Reload</div>
       <div><kbd>M</kbd> Map</div>
-      <div><kbd>V</kbd> Camera distance</div>
+      <div><kbd>Tab</kbd> Radio station</div>
       <div><kbd>Esc</kbd> Pause</div>
     </div>
     <div class="touchnote" id="touchnote" hidden>Crimson Coast needs a keyboard and mouse.</div>
@@ -200,7 +206,9 @@
       <div><kbd>↑</kbd>/<kbd>↓</kbd> Plane pitch</div>
       <div><kbd>T</kbd> Skip an hour</div>
       <div><kbd>N</kbd> Sound on / off</div>
+      <div><kbd>Tab</kbd> Change radio station</div>
     </div>
+    <div class="credits">Models: Kenney, KayKit (Kay Lousberg), Blendswap artists via pmndrs market (CC0) · Babylon.js aerobatic plane (CC BY 4.0). Sound &amp; music: Xonotic (GPLv3+), Kenney, Godot demo projects (MIT / CC0). Full list in assets/CREDITS.md.</div>
     <div class="tag">Yellow squares on the radar start missions. Lose the cops by breaking line of sight, or pay $100 at the Pay 'n' Spray (orange square). Big air earns stunt bonuses.</div>
     <div class="btnrow"><button id="btn-resume" type="button">Resume</button><button id="btn-free" class="ghost" type="button">Mouse look: captured</button></div>
   </div>
@@ -231,7 +239,7 @@
 </div>
 
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
 </script>
 <script>
   if (matchMedia('(pointer: coarse)').matches) document.getElementById('touchnote').hidden = false;

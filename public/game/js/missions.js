@@ -98,13 +98,13 @@ function updatePickups(dt) {
     if (p.kind === 'weapon') {
       P.giveWeapon(p.data.w, p.data.ammo);
       notify(`Picked up ${WEAPONS[p.data.w].name} (+${p.data.ammo})`);
-      sfx('pickup');
+      sfx('weapon_pickup');
     } else if (p.kind === 'health') {
       if (P.health >= 100) took = false;
-      else { P.health = 100; notify('Health restored'); sfx('pickup'); }
+      else { P.health = 100; notify('Health restored'); sfx('health'); }
     } else if (p.kind === 'armor') {
       if (P.armor >= 100) took = false;
-      else { P.armor = 100; notify('Body armor equipped'); sfx('pickup'); }
+      else { P.armor = 100; notify('Body armor equipped'); sfx('armor'); }
     } else if (p.kind === 'cash') {
       P.money += p.data.amount;
       sfx('cash');
@@ -154,8 +154,17 @@ function updateSpray(dt) {
     v.health = v.spec.hp;
     v.fireTimer = -1;
     const cols = [0x1565c0, 0x2e7d32, 0x6a1b9a, 0xf9a825, 0xc62828, 0x00838f, 0xfafafa];
-    v.m.bodyMesh.material = v.m.bodyMesh.material.clone();
-    v.m.bodyMesh.material.color.setHex(cols[Math.floor(Math.random() * cols.length)]);
+    const col = cols[Math.floor(Math.random() * cols.length)];
+    if (v.m.model) {
+      for (const o of v.m.meshes) {
+        if (Array.isArray(o.material) || !/paint|helicopterbody/i.test(o.material.name)) continue;
+        o.material = o.material.clone();
+        o.material.color.setHex(col);
+      }
+    } else {
+      v.m.bodyMesh.material = v.m.bodyMesh.material.clone();
+      v.m.bodyMesh.material.color.setHex(col);
+    }
     bigMessage('RESPRAYED', 'Wanted level cleared · $100', '#ffb300', 2.5);
     sfx('cash');
   }

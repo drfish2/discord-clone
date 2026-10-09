@@ -88,6 +88,7 @@ function applyHit(h, dmg, shooter, dx, dz, ox, oy, oz) {
   } else if (h.world) {
     spawn('dust', x, y, z, 2, 0.3);
     spawn('spark', x, y, z, 2, 1);
+    if (Math.random() < 0.25) sfx('ric', { x, y, z });
   }
 }
 

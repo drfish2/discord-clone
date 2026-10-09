@@ -1,5 +1,6 @@
 // Low-poly procedural models: vehicles and people.
 import * as THREE from 'three';
+import { buildVehicleModel, buildCharacterModel } from './assets.js';
 
 export function mergeGeos(list) {
   const geos = list.map((g) => (g.index ? g.toNonIndexed() : g));
@@ -74,6 +75,16 @@ export const VSPEC = {
   plane: { kind: 'plane', len: 9, wid: 11, height: 3, speed: 85, accel: 14, grip: 0, mass: 1.5, hp: 120, name: 'Stunt Plane' },
   jet: { kind: 'plane', len: 16, wid: 14, height: 4.5, speed: 150, accel: 22, grip: 0, mass: 4, hp: 200, name: 'Jet' },
   boat: { kind: 'boat', len: 5.5, wid: 2.2, height: 1.4, speed: 40, accel: 12, grip: 2.5, mass: 1, hp: 120, name: 'Speedboat' },
+  // extra types that only exist as downloaded models (fall back to the sedan/truck shapes)
+  luxury: { kind: 'car', len: 4.9, wid: 2.05, height: 1.9, speed: 52, accel: 15, grip: 7.5, mass: 1.6, hp: 140, wheelR: 0.42, name: 'Luxury SUV', fallback: 'suv' },
+  hatchback: { kind: 'car', len: 4.1, wid: 1.85, height: 1.5, speed: 44, accel: 13, grip: 7.5, mass: 1.0, hp: 90, wheelR: 0.34, name: 'Hatchback', fallback: 'sedan' },
+  van: { kind: 'car', len: 5.0, wid: 2.1, height: 2.1, speed: 38, accel: 10, grip: 6.5, mass: 2, hp: 150, wheelR: 0.4, name: 'Van', fallback: 'pickup' },
+  firetruck: { kind: 'car', len: 8.0, wid: 2.6, height: 3.2, speed: 34, accel: 8, grip: 6, mass: 4, hp: 300, wheelR: 0.55, name: 'Fire Truck', fallback: 'truck' },
+  garbage: { kind: 'car', len: 7.5, wid: 2.6, height: 3.2, speed: 28, accel: 7, grip: 6, mass: 4, hp: 280, wheelR: 0.55, name: 'Garbage Truck', fallback: 'truck' },
+  ambulance: { kind: 'car', len: 6.0, wid: 2.3, height: 2.6, speed: 44, accel: 12, grip: 6.5, mass: 2.2, hp: 180, wheelR: 0.45, name: 'Ambulance', fallback: 'truck' },
+  racecar: { kind: 'car', len: 4.6, wid: 2.0, height: 1.0, speed: 82, accel: 26, grip: 10, mass: 0.8, hp: 70, wheelR: 0.38, name: 'Race Car', fallback: 'sports' },
+  tractor: { kind: 'car', len: 4.0, wid: 2.2, height: 2.6, speed: 18, accel: 7, grip: 7, mass: 2.5, hp: 150, wheelR: 0.6, name: 'Tractor', fallback: 'pickup' },
+  bicycle: { kind: 'bike', len: 1.9, wid: 0.6, height: 1.1, speed: 14, accel: 6, grip: 9, mass: 0.15, hp: 40, wheelR: 0.35, name: 'Bicycle', fallback: 'bike' },
 };
 
 const geoCache = new Map();
@@ -223,6 +234,7 @@ function boatGeo() {
 }
 
 export function vehicleGeo(type) {
+  if (VSPEC[type].fallback) type = VSPEC[type].fallback;
   let g = geoCache.get(type);
   if (g) return g;
   const s = VSPEC[type];
@@ -250,6 +262,23 @@ const rimGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.27, 8).rotateZ(Math.PI / 2
 // Build a vehicle Object3D. Returns {root, wheels[], rotor, tail, prop, bodyMesh, siren[]}
 export function buildVehicleMesh(type, color) {
   const s = VSPEC[type];
+  const model = buildVehicleModel(type, s, type === 'police' || type === 'taxi' || type === 'firetruck' || type === 'ambulance' || type === 'garbage' ? null : color);
+  if (model) {
+    model.siren = [];
+    if (type === 'police' || type === 'policeHeli') {
+      const red = new THREE.MeshBasicMaterial({ color: 0xff1010 });
+      const blue = new THREE.MeshBasicMaterial({ color: 0x1040ff });
+      const y = type === 'police' ? model.size.y + 0.02 : 0.3;
+      const z = type === 'police' ? model.size.z * 0.05 : 0.6;
+      const a = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.14, 0.25), red);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.14, 0.25), blue);
+      a.position.set(-0.28, y, z);
+      b.position.set(0.28, y, z);
+      model.root.add(a, b);
+      model.siren = [a, b];
+    }
+    return model;
+  }
   const g = vehicleGeo(type);
   const root = new THREE.Group();
   const bodyMesh = new THREE.Mesh(g.body, paintMat(color));
@@ -330,7 +359,13 @@ export const SHIRTS = [0xd32f2f, 0x1976d2, 0x388e3c, 0xfbc02d, 0xffffff, 0x21212
 export const PANTS = [0x283593, 0x212121, 0x5d4037, 0x616161, 0x1565c0, 0x8d6e63, 0x37474f];
 export const HAIRS = [0x1b1b1b, 0x3e2723, 0x6d4c41, 0xd7b46a, 0x9e9e9e, 0xb71c1c];
 
-export function buildHuman({ skin, shirt, pants, hair, cap = false }) {
+export function buildHuman(look, kind = 'civ') {
+  const rig = buildCharacterModel(kind, look.variant || 0, look.tint);
+  if (rig) return rig;
+  return buildProceduralHuman(look);
+}
+
+function buildProceduralHuman({ skin, shirt, pants, hair, cap = false }) {
   const root = new THREE.Group();
   const hips = new THREE.Group();
   hips.position.y = 0.9;
@@ -356,5 +391,32 @@ export function buildHuman({ skin, shirt, pants, hair, cap = false }) {
   armR.add(gun);
   hips.add(legL, legR, torso);
   torso.add(armL, armR, head);
-  return { root, hips, legL, legR, torso, armL, armR, head, gun };
+  const parts = { root, hips, legL, legR, torso, armL, armR, head, gun };
+  return {
+    root,
+    gun,
+    skinned: false,
+    setGun(v) {
+      gun.visible = v;
+    },
+    pose(p) {
+      legL.rotation.set(p.legL, 0, p.sit ? 0.25 : 0);
+      legR.rotation.set(p.legR, 0, p.sit ? -0.25 : 0);
+      hips.rotation.x = p.lean || 0;
+      if (p.aim) {
+        armR.rotation.set(-Math.PI / 2 + (p.aimPitch || 0), 0, 0);
+        armL.rotation.set(-Math.PI / 2 + (p.aimPitch || 0) + 0.1, 0, -0.4);
+      } else if (p.lift) {
+        armL.rotation.set(-2.6 + p.armL * 0.3, 0, -0.2);
+        armR.rotation.set(-2.6 + p.armR * 0.3, 0, 0.2);
+      } else if (p.punch) {
+        armR.rotation.set(-Math.PI / 2, 0, 0);
+        armL.rotation.set(-p.armL, 0, 0.05);
+      } else {
+        armL.rotation.set(-p.armL, 0, 0.05);
+        armR.rotation.set(-p.armR, 0, -0.05);
+      }
+    },
+    parts,
+  };
 }

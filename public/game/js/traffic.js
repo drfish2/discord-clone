@@ -173,7 +173,7 @@ export class RoadAI {
 }
 
 // ---------------------------------------------------------------- traffic manager
-const TYPES = [['sedan', 30], ['suv', 16], ['taxi', 9], ['sports', 6], ['truck', 6], ['bus', 3], ['pickup', 10], ['police', 3]];
+const TYPES = [['sedan', 22], ['hatchback', 12], ['suv', 12], ['luxury', 5], ['taxi', 9], ['sports', 6], ['van', 7], ['truck', 6], ['pickup', 9], ['police', 3], ['ambulance', 2], ['garbage', 2], ['firetruck', 1], ['bus', 2]];
 function pickType(city) {
   let tot = 0;
   for (const [t, w] of TYPES) if (city || t !== 'bus') tot += w;
@@ -299,7 +299,7 @@ function spawnParked(pp) {
     const side = Math.random() < 0.5 ? 1 : -1;
     const px = x - s.dz * (s.w / 2 - 1.3) * side, pz = z + s.dx * (s.w / 2 - 1.3) * side;
     if (anyVehicleNear(px, pz, 8)) continue;
-    const type = Math.random() < 0.15 ? 'bike' : pick(['sedan', 'sedan', 'suv', 'sports', 'pickup', 'taxi']);
+    const type = Math.random() < 0.15 ? pick(['bike', 'bicycle']) : pick(['sedan', 'hatchback', 'suv', 'luxury', 'sports', 'pickup', 'van']);
     const v = spawnVehicle(type, px, pz, Math.atan2(s.dx * side, s.dz * side));
     v.parked = true;
     return;
@@ -329,6 +329,10 @@ export function setupFixedVehicles() {
   add('sports', -5.6, 40, 0, 0xc62828);
   add('bike', -5.6, 27, 0, 0x111111);
   add('suv', 94.3, 150, 0, 0xfafafa);
+  add('bicycle', -9.5, 30, 0, 0xe65100);
+  add('racecar', 1250, 150, Math.PI / 2, 0xc62828);
+  add('tractor', TOWNS[2].x - 30, TOWNS[2].z + 25, 1, 0x2e7d32);
+  add('luxury', TOWNS[1].x + 20, TOWNS[1].z + 30, 0, 0x212121);
   // countryside
   add('pickup', TOWNS[0].x + 30, TOWNS[0].z - 30, 1, 0x8d6e63);
   add('bike', TOWNS[0].x - 20, TOWNS[0].z + 40, 2, 0xe65100);

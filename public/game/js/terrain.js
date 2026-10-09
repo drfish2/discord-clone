@@ -54,8 +54,41 @@ function rectDist(x, z, x0, x1, z0, z1) {
   return Math.hypot(dx, dz);
 }
 
+// ---------------------------------------------------------------- island shape
+function segDistRaw(x, z, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+  return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+}
+// 1 on land, 0 at sea: a domain-warped, noisy "squircle" island with bays,
+// kept solid under the highways and towns so every road reaches dry land.
+export function islandMask(x, z) {
+  const wx = x + fbm(x * 0.0005 + 11.3, z * 0.0005 - 4.1, 3) * 650;
+  const wz = z + fbm(x * 0.0005 - 7.7, z * 0.0005 + 9.2, 3) * 650;
+  const d = Math.pow(Math.pow(Math.abs(wx), 3.2) + Math.pow(Math.abs(wz), 3.2), 1 / 3.2);
+  const edge = 2450 + fbm(wx * 0.0011 + 2.0, wz * 0.0011 + 5.0, 5) * 620;
+  let land = 1 - sstep(edge - 260, edge + 80, d);
+  if (land >= 1) return 1;
+  let keep = 0;
+  for (const hw of HIGHWAYS) {
+    const P = hw.pts;
+    for (let i = 0; i < P.length - 1; i++) {
+      const dd = segDistRaw(x, z, P[i][0], P[i][1], P[i + 1][0], P[i + 1][1]);
+      if (dd < 300) keep = Math.max(keep, 1 - sstep(70, 300, dd));
+    }
+  }
+  for (const t of TOWNS) keep = Math.max(keep, 1 - sstep(t.r + 20, t.r + 200, Math.hypot(x - t.x, z - t.z)));
+  land = Math.max(land, keep * 0.95);
+  // scattered islets offshore
+  const isl = sstep(0.36, 0.5, fbm(x * 0.0022 + 3.3, z * 0.0022 + 8.1, 4)) * sstep(edge + 120, edge + 380, d) * (1 - sstep(2750, 2950, Math.max(Math.abs(x), Math.abs(z))));
+  return Math.max(land, isl * 0.9);
+}
+
 function rawHeight(x, z) {
-  let h = 10 + fbm(x * 0.0011 + 3.1, z * 0.0011 - 1.7, 4) * 26;
+  // gentle hills with domain-warped ridges for a more natural relief
+  const qx = x + fbm(x * 0.0009 + 1.7, z * 0.0009 + 8.3, 3) * 280, qz = z + fbm(x * 0.0009 - 5.1, z * 0.0009 + 2.9, 3) * 280;
+  let h = 15 + fbm(qx * 0.0011 + 3.1, qz * 0.0011 - 1.7, 5) * 30;
+  h += Math.pow(ridged(qx * 0.0016 + 9.1, qz * 0.0016 - 3.3, 4), 2) * 38 - 8;
   h += noise2(x * 0.01, z * 0.01) * 1.5;
   const mN = mountainF(z);
   if (mN > 0) h += mN * (40 + ridged(x * 0.0009 + 5.3, z * 0.0009, 5) * 430);
@@ -80,7 +113,10 @@ export function baseHeight(x, z) {
   h = lerp(2.9, h, sstep(830, 1050, ce));
   const ad = rectDist(x, z, AIRPORT.x0, AIRPORT.x1, AIRPORT.z0, AIRPORT.z1);
   h = lerp(2.9, h, sstep(0, 160, ad));
-  h = lerp(h, -30, sstep(2600, 2950, ce));
+  // sea floor beyond the island's coastline; land ramps down into beaches
+  const land = islandMask(x, z);
+  const seabed = -26 + fbm(x * 0.002, z * 0.002, 3) * 6;
+  h = land >= 0.999 ? h : lerp(seabed, Math.max(h, 1.5) * sstep(0.35, 1, land) + 1.2 * (land > 0.35 ? 1 : land / 0.35), sstep(0.15, 0.6, land));
   return h;
 }
 
@@ -346,6 +382,14 @@ export const ramps = []; // {x,z,rot,w,len,h,base}
 export const decor = []; // misc static boxes {x,y,z,sx,sy,sz,rot,color}
 export const signs = []; // {text,x,y,z,rot,w,h,bg,fg}
 export const zonesDecal = [];
+export const props = []; // instanced street furniture {file,x,z,y,rot,h}
+// KayKit City Builder buildings (no base): footprint width (x), depth (z), height, in model units
+export const KK = {
+  A: [1.2, 1.45, 1.55], B: [1.6, 1.3, 1.55], C: [1.2, 1.3, 2.25], D: [1.6, 1.3, 2.25],
+  E: [2.0, 1.45, 2.25], F: [2.0, 1.3, 2.25], G: [2.0, 1.45, 2.25], H: [2.0, 1.3, 2.95],
+};
+const KK_LOW = ['A', 'B', 'C', 'D', 'E', 'F'];
+const KK_ALL = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const BG = 40;
 const bGrid = new Map();
 function regCollider(o, x0, x1, z0, z1) {
@@ -431,23 +475,36 @@ function genCity() {
             addBuilding(x0, x0 + w, z0, z0 + dd, h, PALETTE.down[Math.floor(R() * PALETTE.down.length)], 'tower');
           }
       } else if (t === 'mid' || t.startsWith('gang_') || t === 'res') {
-        const gang = t.startsWith('gang_');
-        const n = t === 'mid' ? 3 : 3;
+        // KayKit buildings on a lot grid, fronts facing the nearest street
+        const mid = t === 'mid';
+        const n = 3;
         const cell = 80 / n;
         for (let a = 0; a < n; a++)
           for (let b = 0; b < n; b++) {
-            if (t === 'mid' && a === 1 && b === 1) continue; // courtyard
-            if (t !== 'mid' && R() < 0.15) continue;
-            const lx0 = ix0 + a * cell, lz0 = iz0 + b * cell;
-            const house = t !== 'mid';
-            const w = house ? rr(10, 16) : rr(18, cell - 1);
-            const dd = house ? rr(10, 15) : rr(18, cell - 1);
-            const x0 = lx0 + rr(0.5, cell - w - 0.5), z0 = lz0 + rr(0.5, cell - dd - 0.5);
-            const h = house ? rr(4.5, 8) : rr(12, 34);
-            const pal = gang ? PALETTE.gang : house ? PALETTE.res : PALETTE.mid;
-            addBuilding(x0, x0 + w, z0, z0 + dd, h, pal[Math.floor(R() * pal.length)], house ? 'house' : 'mid', house ? ROOFS[Math.floor(R() * ROOFS.length)] : null);
+            if (a === 1 && b === 1) continue; // back yard
+            if (!mid && R() < 0.12) continue;
+            const lcx = ix0 + (a + 0.5) * cell, lcz = iz0 + (b + 0.5) * cell;
+            const kind = mid ? KK_ALL[2 + Math.floor(R() * 6)] : KK_LOW[Math.floor(R() * 6)];
+            const [kw, kd, kh] = KK[kind];
+            // face the closest block edge
+            const dW = lcx - r.x0, dE = r.x1 - lcx, dN = lcz - r.z0, dS = r.z1 - lcz;
+            const m = Math.min(dW, dE, dN, dS);
+            const rot = m === dS ? 0 : m === dN ? Math.PI : m === dE ? Math.PI / 2 : -Math.PI / 2;
+            const side = rot === Math.PI / 2 || rot === -Math.PI / 2;
+            const maxS = (cell - 2) / Math.max(kw, kd);
+            const sc = Math.min(maxS, mid ? rr(10, 12.5) : rr(7.5, 10.5));
+            const wx = (side ? kd : kw) * sc, wz = (side ? kw : kd) * sc;
+            // push toward the street so facades line up
+            const push = (side ? cell - wx : cell - wz) / 2 - 1;
+            const fx = Math.round(Math.sin(rot)), fz = Math.round(Math.cos(rot));
+            const cx2 = lcx + fx * push, cz2 = lcz + fz * push;
+            const bld = addBuilding(cx2 - wx / 2, cx2 + wx / 2, cz2 - wz / 2, cz2 + wz / 2, kh * sc, 0x9a8f80, 'kk');
+            bld.kk = kind;
+            bld.rot = rot;
+            bld.scale = sc;
           }
-        if (t !== 'mid') for (let k = 0; k < 4; k++) addTree(rr(ix0, ix1), rr(iz0, iz1), 'round', rr(0.8, 1.2));
+        if (!mid) for (let k = 0; k < 3; k++) addTree(lerp(ix0, ix1, 0.42 + R() * 0.16), lerp(iz0, iz1, 0.42 + R() * 0.16), 'round', rr(0.8, 1.2));
+        props.push({ file: 'kk_dumpster', x: lerp(ix0, ix1, 0.5), z: lerp(iz0, iz1, 0.5) + 6, rot: R() * 6.28, h: 1.6 });
       } else if (t === 'park') {
         for (let k = 0; k < 22; k++) addTree(rr(ix0, ix1), rr(iz0, iz1), 'round', rr(0.9, 1.5));
       } else if (t === 'plaza') {
@@ -472,14 +529,33 @@ function genCity() {
         SPECIAL.spray = { x0: ix0 + 4, x1: ix0 + 36, z0: iz0 + 25, z1: iz0 + 55, x: ix0 + 20, z: iz0 + 40 };
         signs.push({ text: "PAY 'N' SPRAY", x: ix0 + 39.7, y: SLAB_TOP + 6.5, z: iz0 + 40, rot: -Math.PI / 2, w: 22, h: 3.5, bg: '#ffb300', fg: '#1a1a1a' });
       }
-      if (t === 'down' || t === 'mid' || t === 'police' || t === 'plaza') {
-        // street lamps around block
-        for (let k = 0; k < 2; k++) {
-          lamps.push({ x: r.x0 + 0.8 + k * 43, z: r.z0 + 0.8, rot: Math.PI });
-          lamps.push({ x: r.x1 - 0.8 - k * 43, z: r.z1 - 0.8, rot: 0 });
-        }
+      // street lamps along every block edge, arms reaching over the road
+      for (const f of [0.2, 0.5, 0.8]) {
+        lamps.push({ x: lerp(r.x0, r.x1, f), z: r.z0 + 0.7, dir: Math.PI });
+        lamps.push({ x: lerp(r.x0, r.x1, f), z: r.z1 - 0.7, dir: 0 });
+        lamps.push({ x: r.x0 + 0.7, z: lerp(r.z0, r.z1, f), dir: -Math.PI / 2 });
+        lamps.push({ x: r.x1 - 0.7, z: lerp(r.z0, r.z1, f), dir: Math.PI / 2 });
+      }
+      // a hydrant and a couple of benches per block
+      props.push({ file: 'kk_firehydrant', x: lerp(r.x0, r.x1, 0.35), z: r.z0 + 1.0, rot: 0, h: 0.9, col: 0.3 });
+      if (t === 'park' || t === 'plaza' || R() < 0.3) props.push({ file: 'kk_bench', x: lerp(r.x0, r.x1, 0.65), z: r.z1 - 1.2, rot: Math.PI, h: 0.9 });
+      if (R() < 0.5) props.push({ file: 'kk_trash_A', x: r.x1 - 1.1, z: lerp(r.z0, r.z1, 0.3), rot: 0, h: 0.9 });
+    }
+  // traffic lights on two corners of each intersection
+  for (let i = 1; i < 16; i++)
+    for (let j = 1; j < 16; j++) {
+      const x = CL[i], z = CL[j];
+      for (const [sx, sz] of [[1, 1], [-1, -1]]) {
+        const px = x + sx * 8.2, pz = z + sz * 8.2;
+        if (!blockAt(px, pz)) continue;
+        props.push({ file: 'kk_trafficlight_A', x: px, z: pz, rot: Math.atan2(-sx, -sz), h: 5.2, col: 0.25 });
       }
     }
+  for (const l of lamps) regCollider({ t: 1, x: l.x, z: l.z, r: 0.25, y0: 0, y1: SLAB_TOP + 7 }, l.x - 1, l.x + 1, l.z - 1, l.z + 1);
+  for (const p of props) {
+    p.y = SLAB_TOP;
+    if (p.col) regCollider({ t: 1, x: p.x, z: p.z, r: p.col, y0: 0, y1: SLAB_TOP + p.h }, p.x - 1, p.x + 1, p.z - 1, p.z + 1);
+  }
   // avenue trees along a few streets
   for (const xi of [2, 6, 10, 14]) {
     const x = CL[xi];
@@ -523,6 +599,13 @@ function genOutside() {
       addBuilding(x - w / 2, x + w / 2, z - dd / 2, z + dd / 2, h, pal[Math.floor(R() * pal.length)], 'house', t.style === 'desert' ? null : ROOFS[Math.floor(R() * ROOFS.length)]);
       placed++;
     }
+    if (t.style === 'beach' || t.style === 'desert') {
+      for (let k = 0; k < (t.style === 'beach' ? 40 : 14); k++) {
+        const a = R() * Math.PI * 2, d = rr(10, t.r + 60);
+        const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d;
+        if (okForProp(x, z, 6) && terrainHeight(x, z) > 1.2 && !buildings.some((b) => x > b.x0 - 2 && x < b.x1 + 2 && z > b.z0 - 2 && z < b.z1 + 2)) addTree(x, z, 'palm', rr(0.8, 1.3));
+      }
+    }
     if (t.style === 'obs') {
       addBuilding(t.x + 20, t.x + 50, t.z - 15, t.z + 15, 10, 0xe8e8e8, 'obs');
       const b = buildings[buildings.length - 1];
@@ -548,7 +631,7 @@ function genOutside() {
     const h = terrainHeight(x, z);
     if (h < 1.5) return;
     const ce = Math.max(Math.abs(x), Math.abs(z));
-    if (ce < 900 || ce > 2620) return;
+    if (ce < 900) return;
     if (x > A.x0 - 60 && x < A.x1 + 60 && z > A.z0 - 60 && z < A.z1 + 60) return;
     for (const t of TOWNS) if (Math.hypot(x - t.x, z - t.z) < t.r + 10) return;
     if (!okForProp(x, z, 6)) return;
@@ -570,6 +653,7 @@ function genOutside() {
       if (R() < 0.85) addTree(x, z, R() < 0.8 ? 'pine' : 'round', rr(0.9, 1.7));
       return;
     }
+    if (h < 6 && islandMask(x, z) < 0.98) { if (R() < 0.5) addTree(x, z, 'palm', rr(0.8, 1.3)); return; }
     if (R() < 0.18) addTree(x, z, R() < 0.7 ? 'round' : 'pine', rr(0.8, 1.4));
     else if (R() < 0.05) addTree(x, z, 'bush', 1);
   };
@@ -694,7 +778,7 @@ export function zoneName(x, z) {
   if (x > AIRPORT.x0 - 50 && x < AIRPORT.x1 + 50 && z > AIRPORT.z0 - 50 && z < AIRPORT.z1 + 50) return 'Crimson Intl. Airport';
   for (const t of TOWNS) if (Math.hypot(x - t.x, z - t.z) < t.r + 60) return t.name;
   if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r + 120) return 'Mirror Lake';
-  if (Math.max(Math.abs(x), Math.abs(z)) > 2620) return 'Crimson Coastline';
+  if (islandMask(x, z) < 0.97) return 'Crimson Coastline';
   if (desertF(x, z) > 0.5) return 'Red Dust Desert';
   if (mountainF(z) > 0.5) return terrainHeight(x, z) > 250 ? 'Mt. Ember' : 'Ember Ridge';
   if (forestF(x) > 0.5) return 'Pinewood Forest';

@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { G, GRAV, WATER, clamp, lerp, damp, emit, angWrap } from './core.js';
 import { groundHeight, collideCircle, isWater, terrainHeight } from './terrain.js';
 import { buildVehicleMesh, VSPEC, wreckMat } from './models.js';
+
+const wreckModelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 1 });
 import { spawn, explosionFx } from './fx.js';
 
 const _q = new THREE.Quaternion();
@@ -89,8 +91,11 @@ export class Vehicle {
     this.dead = true;
     this.health = 0;
     this.fireTimer = -1;
-    this.m.bodyMesh.material = wreckMat;
-    if (this.m.detMesh) this.m.detMesh.material = wreckMat;
+    if (this.m.model) for (const o of this.m.meshes) o.material = wreckModelMat;
+    else {
+      this.m.bodyMesh.material = wreckMat;
+      if (this.m.detMesh) this.m.detMesh.material = wreckMat;
+    }
     for (const s of this.m.siren) s.visible = false;
     explosionFx(this.pos.x, this.pos.y, this.pos.z, this.kind === 'plane' || this.kind === 'heli' ? 1.5 : 1);
     this.vy = this.kind === 'car' ? 7 : this.vy;
@@ -418,7 +423,9 @@ export class Vehicle {
       if (this.drowned > 14 && !this.persist) this.removeT = 0.01;
     }
     if (this.pos.y > 1500) this.pos.y = 1500;
-    if (this.m.prop) this.m.prop.rotation.z += (this.throttleLevel * 40 + (powered ? 8 : 0)) * dt;
+    const propSpin = (this.throttleLevel * 40 + (powered ? 8 : 0)) * dt;
+    if (this.m.prop) this.m.prop.rotation.z += propSpin;
+    if (this.m.propBone) this.m.propBone.rotateY(propSpin);
     if (this.dead && this.onGround && !this.crashed) { this.crashed = true; }
   }
 
@@ -467,18 +474,26 @@ export class Vehicle {
     }
     if (this.m.wheels.length) {
       const st = this.steer * 0.5;
-      this.m.wheels.forEach((w, i) => {
-        w.rotation.x = this.spin;
-        if (i < 2 && this.kind === 'car') w.rotation.y = -st;
-        if (this.kind === 'bike' && i === 0) w.rotation.y = -st * 0.5;
-      });
-      if (this.kind === 'bike') this.m.wheels.forEach((w) => (w.rotation.order = 'YXZ'));
+      if (this.m.model) {
+        for (const w of this.m.wheels) {
+          w.spin.rotation.x = this.spin;
+          if (w.front) w.pivot.rotation.y = -st * (this.kind === 'bike' ? 0.5 : 1);
+        }
+      } else {
+        this.m.wheels.forEach((w, i) => {
+          w.rotation.order = 'YXZ';
+          w.rotation.x = this.spin;
+          if (i < 2 && this.kind === 'car') w.rotation.y = -st;
+          if (this.kind === 'bike' && i === 0) w.rotation.y = -st * 0.5;
+        });
+      }
     }
   }
 }
 
 export function spawnVehicle(type, x, z, heading, color) {
-  return new Vehicle(type, x, z, heading, color ?? CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)]);
+  const pool = type === 'heli' ? [0xe65100, 0xfafafa, 0x1565c0, 0xc62828] : CAR_COLORS;
+  return new Vehicle(type, x, z, heading, color ?? pool[Math.floor(Math.random() * pool.length)]);
 }
 
 // vehicle vs vehicle collisions

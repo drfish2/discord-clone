@@ -10,10 +10,12 @@ import { collideVehicles } from './vehicles.js';
 import { updateTraffic, setupFixedVehicles, updateFixed } from './traffic.js';
 import { updatePolice, clearWanted, wanted } from './police.js';
 import { updateRockets } from './weapons.js';
-import { initAudio, updateAudio, sfx, setMuted, muted } from './audio.js';
+import { initAudio, updateAudio, sfx, setMuted, muted, radioNext, pauseRadio } from './audio.js';
 import { initHud, buildMapImage, updateHud, drawBigMap, help, showDeathScreen, showVehicleName, notify } from './hud.js';
 import { updateCamera, cycleZoom, snapCamera } from './camera.js';
 import { initMissions, updateMissions, abortMission } from './missions.js';
+import { loadModels } from './assets.js';
+import { loadSounds } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const START = { x: -9.5, z: 43 };
@@ -48,7 +50,11 @@ async function boot() {
   G.camera = camera;
   G.renderer = renderer;
 
-  setLoading('Raising mountains, carving rivers…', 15);
+  setLoading('Loading cars, people and buildings…', 5);
+  const sounds = loadSounds();
+  await loadModels((f) => setLoading('Loading cars, people and buildings…', 5 + f * 30));
+  await sounds;
+  setLoading('Raising mountains, carving rivers…', 40);
   await nextFrame();
   buildWorld(scene);
   setLoading('Painting the map…', 60);
@@ -93,6 +99,7 @@ addEventListener('keydown', (e) => {
     if (e.code === 'KeyM') openMap();
     if (e.code === 'KeyP' || e.code === 'Escape') pause();
     if (e.code === 'KeyV') cycleZoom();
+    if (e.code === 'Tab') radioNext();
     if (e.code === 'KeyT') { G.dayTime = (G.dayTime + 1) % 24; notify(`Time skipped to ${Math.floor(G.dayTime)}:00`); }
     if (e.code === 'KeyN') { setMuted(!muted); notify(muted ? 'Sound off' : 'Sound on'); }
   } else if (G.state === 'map') {
@@ -156,6 +163,7 @@ function pause() {
   G.keys = {};
   G.mouse.left = G.mouse.right = false;
   $('pause').hidden = false;
+  pauseRadio();
 }
 function resume() {
   $('pause').hidden = true;
@@ -164,6 +172,7 @@ function resume() {
 }
 function openMap() {
   G.state = 'map';
+  pauseRadio();
   $('mapview').hidden = false;
   drawBigMap();
 }
@@ -217,6 +226,7 @@ function showResults() {
   ]);
   document.exitPointerLock && document.exitPointerLock();
   $('hud').hidden = true;
+  pauseRadio();
   G.state = 'dead';
 }
 function respawn() {

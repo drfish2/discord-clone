@@ -94,6 +94,7 @@ export class Player extends Ped {
     i = (i + dir + o.length) % o.length;
     this.weapon = o[i];
     this.reloadT = 0;
+    sfx('weapon_switch');
   }
   giveWeapon(w, ammo) {
     const W = WEAPONS[w];
@@ -174,6 +175,7 @@ export class Player extends Ped {
     if (G.pressed.Space && this.onGround && !this.swim) {
       this.vy = 7.2;
       this.onGround = false;
+      sfx('jump');
     }
     if (!this.swim) this.tryShoot(_dir);
     if (G.pressed.KeyF) this.tryEnter();
@@ -285,13 +287,8 @@ export class Player extends Ped {
       const r = this.root;
       r.position.set(v.pos.x - Math.sin(v.heading) * 0.25, v.pos.y + 0.05, v.pos.z - Math.cos(v.heading) * 0.25);
       r.rotation.set(-v.pitch, v.heading, v.roll, 'YXZ');
-      const m = this.m;
-      m.hips.position.y = 0.95;
-      m.hips.rotation.x = 0.35;
-      m.legL.rotation.set(-1.2, 0, 0.25);
-      m.legR.rotation.set(-1.2, 0, -0.25);
-      m.armL.rotation.set(-1.2, 0, 0);
-      m.armR.rotation.set(-1.2, 0, 0);
+      this.sitting = true;
+      this.m.pose({ sit: true, legL: 1.3, legR: 1.3, kneeL: 1.5, kneeR: 1.5, armL: 1.1, armR: 1.1, lean: 0.35 });
       this.setWeaponVisible(false);
     }
     if (v.dead || v.drowned > 0.4) {

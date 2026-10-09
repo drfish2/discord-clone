@@ -2,11 +2,12 @@
 import * as THREE from 'three';
 import { G, clamp, lerp, sstep, WATER } from './core.js';
 import {
-  H, TN, TS, HALF, CL, segs, nodes, HIGHWAYS, blockType, blockRect, buildings, trees, lamps, ramps, decor, signs,
+  H, TN, TS, HALF, CL, segs, nodes, HIGHWAYS, blockType, blockRect, buildings, trees, lamps, ramps, decor, signs, props,
   terrainHeight, desertF, mountainF, forestF, AIRPORT, SPECIAL, SLAB_TOP, ROAD_W, generateWorldData, riverDist,
 } from './terrain.js';
 import { noise2 } from './noise.js';
 import { mergeGeos, colorGeo } from './models.js';
+import { hasModel, instanceProp, updateTileVisibility } from './assets.js';
 
 const M4 = new THREE.Matrix4();
 const Q = new THREE.Quaternion();
@@ -293,17 +294,32 @@ function buildingMaterial() {
   return mat;
 }
 
+function buildKayKit(scene, list) {
+  // KayKit City Builder buildings, one InstancedMesh set per building style
+  const byKind = {};
+  for (const b of list) (byKind[b.kk] = byKind[b.kk] || []).push(b);
+  const rest = [];
+  for (const kind of Object.keys(byKind)) {
+    const file = 'kk_bld_' + kind;
+    if (!hasModel(file)) { rest.push(...byKind[kind]); continue; }
+    const mats = byKind[kind].map((b) => new THREE.Matrix4().compose(new THREE.Vector3((b.x0 + b.x1) / 2, b.y0, (b.z0 + b.z1) / 2), new THREE.Quaternion().setFromAxisAngle(UP, b.rot), new THREE.Vector3(b.scale, b.scale, b.scale)));
+    for (const m of instanceProp(file, {}, mats)) scene.add(m);
+  }
+  return rest;
+}
+
 function buildBuildings(scene) {
+  const boxes = buildings.filter((b) => !b.kk).concat(buildKayKit(scene, buildings.filter((b) => b.kk)));
   const geo = new THREE.BoxGeometry(1, 1, 1);
   geo.translate(0, 0.5, 0);
-  const mesh = new THREE.InstancedMesh(geo, buildingMaterial(), buildings.length);
-  const houses = buildings.filter((b) => b.roof);
+  const mesh = new THREE.InstancedMesh(geo, buildingMaterial(), boxes.length);
+  const houses = boxes.filter((b) => b.roof);
   const roofGeo = new THREE.ConeGeometry(0.7072, 1, 4, 1);
   roofGeo.rotateY(Math.PI / 4);
   roofGeo.translate(0, 0.5, 0);
   const roofMesh = new THREE.InstancedMesh(roofGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), houses.length);
   let ri = 0;
-  buildings.forEach((b, i) => {
+  boxes.forEach((b, i) => {
     M4.compose(V.set((b.x0 + b.x1) / 2, b.y0, (b.z0 + b.z1) / 2), Q.identity(), S.set(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0));
     mesh.setMatrixAt(i, M4);
     mesh.setColorAt(i, C.setHex(b.color));
@@ -357,9 +373,30 @@ function buildBuildings(scene) {
 }
 
 // ---------------------------------------------------------------- nature
+function buildModelTrees(scene, by) {
+  // Kenney trees, palms and rock formations where the models are available
+  const rot = (t) => new THREE.Quaternion().setFromAxisAngle(UP, (t.x * 13.1 + t.z * 7.7) % 6.28);
+  const place = (list, file, h, yOff = 0) => {
+    if (!list.length || !hasModel(file)) return false;
+    const mats = list.map((t) => new THREE.Matrix4().compose(new THREE.Vector3(t.x, t.y + yOff, t.z), rot(t), new THREE.Vector3(t.s * h, t.s * h, t.s * h)));
+    for (const m of instanceProp(file, { height: 1 }, mats)) scene.add(m);
+    return true;
+  };
+  if (by.round.length && hasModel('low-poly-tree') && hasModel('tree-big')) {
+    const a = by.round.filter((t, i) => i % 3 !== 0), b = by.round.filter((t, i) => i % 3 === 0);
+    place(a, 'low-poly-tree', 7.5, -0.2);
+    place(b, 'tree-big', 9);
+    by.round = [];
+  }
+  if (place(by.palm, 'palm-long', 9)) by.palm = [];
+  if (place(by.rock, 'formation-rock', 3.2, -0.3)) by.rock = [];
+}
+
 function buildTrees(scene) {
-  const by = { pine: [], round: [], cactus: [], rock: [], bush: [] };
+  const by = { pine: [], round: [], cactus: [], rock: [], bush: [], palm: [] };
   for (const t of trees) by[t.type].push(t);
+  buildModelTrees(scene, by);
+  by.round.push(...by.palm);
   const lam = (c) => new THREE.MeshLambertMaterial({ color: c });
   const make = (geo, mat, list, cb, shadow = true) => {
     if (!list.length) return;
@@ -415,7 +452,23 @@ function buildTrees(scene) {
   if (leaves) leaves.instanceColor.needsUpdate = true;
 }
 
+function buildProps(scene) {
+  const byFile = {};
+  for (const p of props) (byFile[p.file] = byFile[p.file] || []).push(p);
+  for (const file of Object.keys(byFile)) {
+    const mats = byFile[file].map((p) => new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion().setFromAxisAngle(UP, p.rot), new THREE.Vector3(p.h, p.h, p.h)));
+    const ms = instanceProp(file, { height: 1, center: !/light/.test(file) }, mats, { shadow: file !== 'kk_trash_A' });
+    if (ms) for (const m of ms) scene.add(m);
+  }
+}
+
 function buildLamps(scene) {
+  if (hasModel('kk_streetlight')) {
+    // KayKit street light: arm points along -x, so turn it to reach over the road
+    const mats = lamps.map((l) => new THREE.Matrix4().compose(new THREE.Vector3(l.x, SLAB_TOP, l.z), new THREE.Quaternion().setFromAxisAngle(UP, l.dir + Math.PI / 2), new THREE.Vector3(7.5, 7.5, 7.5)));
+    for (const m of instanceProp('kk_streetlight', { height: 1, center: false }, mats)) scene.add(m);
+  }
+  // glowing lamp heads (also the fallback poles when the model is missing)
   const pole = new THREE.CylinderGeometry(0.1, 0.14, 7, 6);
   pole.translate(0, 3.5, 0);
   const arm = new THREE.BoxGeometry(0.12, 0.12, 2);
@@ -425,12 +478,23 @@ function buildLamps(scene) {
   const poleM = new THREE.InstancedMesh(mergeGeos([pole, arm]), new THREE.MeshLambertMaterial({ color: 0x3a3f44 }), lamps.length);
   lampMat = new THREE.MeshBasicMaterial({ color: 0x888877 });
   const headM = new THREE.InstancedMesh(head, lampMat, lamps.length);
+  const model = hasModel('kk_streetlight');
   lamps.forEach((l, i) => {
-    M4.compose(V.set(l.x, SLAB_TOP, l.z), Q.setFromAxisAngle(UP, l.rot), S.set(1, 1, 1));
+    if (model) {
+      // a small emissive bulb under the model's lamp head
+      const ax = Math.sin(l.dir) * 1.8, az = Math.cos(l.dir) * 1.8;
+      M4.compose(V.set(l.x + ax, SLAB_TOP + 6.75, l.z + az), Q.setFromAxisAngle(UP, l.dir), S.set(0.5, 0.15, 0.7));
+      headM.setMatrixAt(i, M4);
+      return;
+    }
+    M4.compose(V.set(l.x, SLAB_TOP, l.z), Q.setFromAxisAngle(UP, l.dir + Math.PI), S.set(1, 1, 1));
     poleM.setMatrixAt(i, M4);
     headM.setMatrixAt(i, M4);
   });
-  scene.add(poleM, headM);
+  if (model) {
+    headM.geometry = new THREE.BoxGeometry(1, 1, 1);
+    scene.add(headM);
+  } else scene.add(poleM, headM);
 }
 
 // ---------------------------------------------------------------- misc
@@ -678,7 +742,13 @@ export function updateWorld(dt, focus) {
   G.cloudMat.opacity = 0.25 + day * 0.65;
   clouds.position.x = (G.time * 3) % 1000;
   G.uniforms.uTime.value = G.time;
+  tileT -= dt;
+  if (tileT <= 0) {
+    tileT = 0.4;
+    updateTileVisibility(G.camera.position, G.camera.position.y > 150 ? 2600 : 1500);
+  }
 }
+let tileT = 0;
 
 export function buildWorld(scene) {
   generateWorldData();
@@ -690,6 +760,7 @@ export function buildWorld(scene) {
   buildBuildings(scene);
   buildTrees(scene);
   buildLamps(scene);
+  buildProps(scene);
   buildAirport(scene);
   buildRamps(scene);
   buildDecor(scene);

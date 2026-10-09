@@ -97,6 +97,13 @@ function renderNotes() {
   $('notify').innerHTML = notes.map((n) => `<div class="note">${n.text}</div>`).join('');
 }
 on('notify', (t) => notify(t));
+let radioT = 0;
+on('radio', (name, note) => {
+  const el = $('radio');
+  el.innerHTML = `<div class="st">${name}</div>${note ? `<div class="gn">${note}</div>` : ''}`;
+  el.classList.add('show');
+  radioT = 3;
+});
 
 let bigT = 0;
 export function bigMessage(text, sub = '', color = '#f2c14e', dur = 3.5) {
@@ -136,6 +143,7 @@ export function updateHud(dt) {
   if (bigT > 0) { bigT -= dt; if (bigT <= 0) $('bigmsg').hidden = true; }
   if (helpT > 0) { helpT -= dt; if (helpT <= 0) $('help').hidden = true; }
   if (vehNameT > 0) { vehNameT -= dt; if (vehNameT <= 0) $('vehname').classList.remove('show'); }
+  if (radioT > 0) { radioT -= dt; if (radioT <= 0) $('radio').classList.remove('show'); }
   const pp = P.vehicle ? P.vehicle.pos : P.pos;
   // zone
   const z = zoneName(pp.x, pp.z);
