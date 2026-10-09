@@ -1,6 +1,6 @@
 // HUD: radar minimap, speedometer, stats, messages, full map, menus.
-import { G, clamp, on } from './core.js';
-import { H, TN, HALF, segs, buildings, blockType, blockRect, AIRPORT, GANGS, SPECIAL, desertF, mountainF, forestF, zoneName, LAKE } from './terrain.js';
+import { G, clamp, lerp, on } from './core.js';
+import { H, TN, HALF, segs, buildings, blockType, blockRect, AIRPORT, GANGS, SPECIAL, desertF, mountainF, forestF, zoneName, LAKE, cityPt, removedV, removedH, CL, RIVER_PATH, TARN, cityShape, riverQuery } from './terrain.js';
 import { WEAPONS } from './weapons.js';
 
 const $ = (id) => document.getElementById(id);
@@ -35,7 +35,10 @@ export function buildMapImage() {
         if (h < 2.2) { r = 200; gg = 188; b = 150; }
         const shade = clamp(1 + (H[j * (TN + 1) + Math.max(0, i - 1)] - h) * 0.03, 0.75, 1.2);
         r *= shade; gg *= shade; b *= shade;
-        if (Math.abs(x) < 815 && Math.abs(z) < 815) { r = 110; gg = 112; b = 106; }
+        if (Math.abs(x) < 1150 && Math.abs(z) < 1150 && cityShape(x, z) > 0.55) {
+          const rq = riverQuery(x, z);
+          if (rq.d > rq.hw + 45) { r = 110; gg = 112; b = 106; } else { r = 84; gg = 128; b = 64; }
+        }
       }
       const o = (py * MAPPX + px) * 4;
       d[o] = r; d[o + 1] = gg; d[o + 2] = b; d[o + 3] = 255;
@@ -43,20 +46,52 @@ export function buildMapImage() {
   }
   g.putImageData(img, 0, 0);
   const sc = MAPPX / (HALF * 2);
+  // warped logical rectangle -> polygon on the map
+  const poly = (x0, x1, z0, z1) => {
+    const D = 4, P = {};
+    g.beginPath();
+    const pts = [];
+    for (let i = 0; i < D; i++) pts.push([lerp(x0, x1, i / D), z0]);
+    for (let j = 0; j < D; j++) pts.push([x1, lerp(z0, z1, j / D)]);
+    for (let i = D; i > 0; i--) pts.push([lerp(x0, x1, i / D), z1]);
+    for (let j = D; j > 0; j--) pts.push([x0, lerp(z0, z1, j / D)]);
+    pts.forEach(([lx, lz], k) => { cityPt(lx, lz, P); k ? g.lineTo(w2m(P.x), w2m(P.z)) : g.moveTo(w2m(P.x), w2m(P.z)); });
+    g.closePath();
+    g.fill();
+  };
   // city blocks
   for (let bi = 0; bi < 16; bi++)
     for (let bj = 0; bj < 16; bj++) {
       const t = blockType[bi][bj];
-      if (t === 'river') continue;
+      if (t === 'river' || t === 'void') continue;
       const r = blockRect(bi, bj);
       g.fillStyle = t === 'park' ? '#5c8a45' : t.startsWith('gang') ? '#7d7670' : '#9a9a92';
-      g.fillRect(w2m(r.x0), w2m(r.z0), (r.x1 - r.x0) * sc, (r.z1 - r.z0) * sc);
+      poly(r.x0, r.x1, r.z0, r.z1);
+      g.fillStyle = '#9a9a92';
+      if (bi > 0 && removedV[bi][bj] && blockType[bi - 1][bj] !== 'void') poly(CL[bi] - 8, CL[bi] + 8, r.z0, r.z1);
+      if (bj > 0 && removedH[bj][bi] && blockType[bi][bj - 1] !== 'void') poly(r.x0, r.x1, CL[bj] - 8, CL[bj] + 8);
     }
   // gang tint
   for (const gg of GANGS) {
     g.fillStyle = gg.css + '40';
-    g.fillRect(w2m(gg.x0), w2m(gg.z0), (gg.x1 - gg.x0) * sc, (gg.z1 - gg.z0) * sc);
+    poly(gg.x0, gg.x1, gg.z0, gg.z1);
   }
+  // the river, including the upland stretch above sea level
+  g.strokeStyle = '#3c78a0';
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  for (let i = 0; i < RIVER_PATH.length - 1; i++) {
+    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
+    g.lineWidth = Math.max(2, a.hw * 2 * sc);
+    g.beginPath();
+    g.moveTo(w2m(a.x), w2m(a.z));
+    g.lineTo(w2m(b.x), w2m(b.z));
+    g.stroke();
+  }
+  g.fillStyle = '#3c78a0';
+  g.beginPath();
+  g.arc(w2m(TARN.x), w2m(TARN.z), TARN.r * sc, 0, Math.PI * 2);
+  g.fill();
   // airport
   g.fillStyle = '#7a7d80';
   g.fillRect(w2m(AIRPORT.runwayX0), w2m(AIRPORT.runwayZ - 25), (AIRPORT.runwayX1 - AIRPORT.runwayX0) * sc, 50 * sc);
@@ -73,7 +108,17 @@ export function buildMapImage() {
   }
   // buildings
   g.fillStyle = '#5d6168';
-  for (const b of buildings) g.fillRect(w2m(b.x0), w2m(b.z0), Math.max(1, (b.x1 - b.x0) * sc), Math.max(1, (b.z1 - b.z0) * sc));
+  for (const b of buildings) {
+    if (b.hidden) continue;
+    g.beginPath();
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const lx = sx * b.hx, lz = sz * b.hz;
+      const x = b.cx + lx * b.c + lz * b.s, z = b.cz - lx * b.s + lz * b.c;
+      g.lineTo(w2m(x), w2m(z));
+    }
+    g.closePath();
+    g.fill();
+  }
   return mapCanvas;
 }
 
@@ -369,7 +414,7 @@ export function drawBigMap() {
   label('PINEWOOD FOREST', -2100, -700, '#c8e6c9');
   label('MIRROR LAKE', LAKE.x, LAKE.z + 230);
   label('CORAL BEACH', -650, 2520);
-  label('CRIMSON RIVER', -600, 1300, '#b3e5fc');
+  { const r = RIVER_PATH[Math.floor(RIVER_PATH.length * 0.15)]; label('CRIMSON RIVER', r.x + 120, r.z, '#b3e5fc'); }
   for (const gg of GANGS) label(gg.name.toUpperCase(), gg.cx, gg.cz, gg.css);
   const dot = (x, z, c, r = 6) => {
     const [a, b] = tp(x, z);

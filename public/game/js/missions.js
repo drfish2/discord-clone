@@ -1,7 +1,8 @@
 // Missions, pickups, Pay 'n' Spray and stunt bonuses.
 import * as THREE from 'three';
 import { G, emit, on, rand } from './core.js';
-import { groundHeight, SPECIAL, TOWNS, GANGS, CL, AIRPORT, LAKE } from './terrain.js';
+import { groundHeight, SPECIAL, TOWNS, GANGS, CL, AIRPORT, LAKE, cityPt, inSpray } from './terrain.js';
+const cp = (x, z) => cityPt(x, z);
 import { Vehicle } from './vehicles.js';
 import { Ped } from './characters.js';
 import { notify, bigMessage, help, setObjective, blips } from './hud.js';
@@ -58,9 +59,10 @@ export function dropCash(x, z, amount) {
 
 function setupPickups() {
   const S = SPECIAL;
-  addPickup('weapon', 40, 30, { w: 'pistol', ammo: 36 });
-  addPickup('weapon', CL[2] + 10, CL[3] + 9.5, { w: 'smg', ammo: 120 }); // Kingz turf alley
-  addPickup('weapon', CL[13] + 50, CL[12] + 9.5, { w: 'shotgun', ammo: 24 }); // Vipers
+  const at = (kind, lx, lz, data) => { const p = cp(lx, lz); return addPickup(kind, p.x, p.z, data); };
+  at('weapon', 40, 30, { w: 'pistol', ammo: 36 });
+  at('weapon', CL[2] + 10, CL[3] + 9.5, { w: 'smg', ammo: 120 }); // Kingz turf alley
+  at('weapon', CL[13] + 50, CL[12] + 9.5, { w: 'shotgun', ammo: 24 }); // Vipers
   addPickup('weapon', S.police.spawnX, S.police.spawnZ + 10, { w: 'shotgun', ammo: 18 });
   addPickup('weapon', TOWNS[3].x - 20, TOWNS[3].z, { w: 'rifle', ammo: 150 });
   addPickup('weapon', 2140, 290, { w: 'rpg', ammo: 8 }); // airport hangars
@@ -72,7 +74,7 @@ function setupPickups() {
   addPickup('health', LAKE.x + 210, LAKE.z, {});
   addPickup('armor', S.police.spawnX + 6, S.police.spawnZ + 10, {});
   addPickup('armor', TOWNS[2].x + 10, TOWNS[2].z, {});
-  addPickup('armor', CL[8] + 50, CL[7] + 30, {});
+  at('armor', CL[8] + 50, CL[7] + 30, {});
   for (const p of pickups) if (p.kind !== 'cash') blips.push({ x: p.x, z: p.z, color: p.kind === 'weapon' ? '#9ccc65' : p.kind === 'health' ? '#ef5350' : '#42a5f5', size: 3, edge: false, pk: p });
 }
 
@@ -144,7 +146,7 @@ function updateSpray(dt) {
   const P = G.player, v = P.vehicle;
   const s = SPECIAL.spray;
   if (!v || v.kind !== 'car' && v.kind !== 'bike' || sprayCd > 0) return;
-  if (v.pos.x > s.x0 && v.pos.x < s.x1 && v.pos.z > s.z0 && v.pos.z < s.z1 && v.speedAbs < 6) {
+  if (inSpray(v.pos.x, v.pos.z) && v.speedAbs < 6) {
     sprayCd = 6;
     const needs = wanted.level > 0 || v.health < v.spec.hp;
     if (!needs) { help("Pay 'n' Spray: come back when you're hot or your ride is damaged.", 3); return; }
@@ -180,11 +182,11 @@ function defineMissions() {
   MISSIONS.push({
     id: 'race',
     title: 'Downtown Dash',
-    giver: { x: 50, z: -82 },
+    giver: cp(50, -82),
     reward: 1500,
     desc: 'Street race. Hit every checkpoint before the clock runs out.',
     start(m) {
-      m.cps = [[100, -150], [300, -200], [400, 0], [300, 300], [-100, 400], [-300, 200], [-500, 0], [-300, -300], [0, -400], [100, -100]].map(([x, z]) => ({ x, z }));
+      m.cps = [[100, -150], [300, -200], [400, 0], [300, 300], [-100, 400], [-200, 200], [-500, 0], [-200, -300], [0, -400], [100, -100]].map(([x, z]) => cp(x, z));
       m.i = 0;
       m.time = 105;
       if (!G.player.vehicle) {
@@ -223,7 +225,7 @@ function defineMissions() {
   MISSIONS.push({
     id: 'steal',
     title: 'Hot Property',
-    giver: { x: CL[13] + 9.5, z: CL[7] + 40 },
+    giver: cp(CL[13] + 9.5, CL[7] + 40),
     reward: 2500,
     desc: "A collector wants the gold coupe parked at Coral Beach. Bring it to the Pay 'n' Spray in one piece.",
     start(m) {
@@ -273,7 +275,7 @@ function defineMissions() {
   MISSIONS.push({
     id: 'turf',
     title: 'Turf War',
-    giver: { x: CL[5] + 9.5, z: CL[3] + 50 },
+    giver: cp(CL[5] + 9.5, CL[3] + 50),
     reward: 3000,
     desc: 'The Purple Kingz have been squeezing the Riverside shops. Take out 10 of them.',
     start(m) {
@@ -345,11 +347,12 @@ function defineMissions() {
   MISSIONS.push({
     id: 'deliver',
     title: 'Desert Run',
-    giver: { x: CL[16] - 9, z: CL[8] + 50 },
+    giver: cp(CL[16] - 9, CL[8] + 50),
     reward: 2000,
     desc: 'Drive a box truck of "auto parts" to Sandy Rock before the rival crew intercepts it.',
     start(m) {
-      m.truck = new Vehicle('truck', CL[16] + 12, CL[8] + 55, 0, 0xeceff1);
+      const tp = cp(CL[16] + 12, CL[8] + 55);
+      m.truck = new Vehicle('truck', tp.x, tp.z, 0, 0xeceff1);
       m.truck.persist = true;
       m.time = 200;
       const t = TOWNS[0];

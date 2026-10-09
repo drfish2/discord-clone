@@ -1,6 +1,6 @@
 // Road traffic AI, parked cars, fixed vehicle spawns, and road pathfinding.
 import { G, clamp, rand, pick, angWrap, emit, on, dist2 } from './core.js';
-import { nodes, segs, AIRPORT, SPECIAL, TOWNS, LAKE, CL, blockAt, isWater } from './terrain.js';
+import { nodes, segs, AIRPORT, SPECIAL, TOWNS, LAKE, CL, blockAt, isWater, cityPt, cityAngle, RIVER_PATH } from './terrain.js';
 import { Vehicle, spawnVehicle, CAR_COLORS } from './vehicles.js';
 import { sfx } from './audio.js';
 
@@ -10,6 +10,7 @@ const LANE = (w) => w / 4;
 export function nearestNode(x, z, maxD = Infinity) {
   let best = null, bd = maxD;
   for (const n of nodes) {
+    if (!n.edges.length) continue;
     const d = Math.abs(n.x - x) + Math.abs(n.z - z);
     if (d < bd) { bd = d; best = n; }
   }
@@ -319,17 +320,22 @@ export function setupFixedVehicles() {
   add('heli', 1800, 110, Math.PI / 2, 0xe65100);
   // hospital & police roof helis
   const hb = SPECIAL.hospital;
-  add('heli', CL[6] + 50, CL[10] + 64, 0, 0xfafafa, null);
+  add('heli', SPECIAL.hospital.roofX, SPECIAL.hospital.roofZ, 0, 0xfafafa, null);
   // boats
-  add('boat', -350, 420, Math.PI, 0xffffff);
-  add('boat', -350, -380, 0, 0x1565c0);
+  // boats moored on the river (one in the city, one downstream)
+  for (const [f, col] of [[0.42, 0xffffff], [0.62, 0x1565c0], [0.85, 0x2e7d32]]) {
+    const i = Math.floor(f * (RIVER_PATH.length - 2));
+    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
+    add('boat', a.x, a.z, Math.atan2(b.x - a.x, b.z - a.z), col);
+  }
   add('boat', LAKE.x + 20, LAKE.z - 60, 0.4, 0xd32f2f);
   add('boat', -700, 2760, 2.0, 0xfafafa);
   // player-friendly cars around start
-  add('sports', -5.6, 40, 0, 0xc62828);
-  add('bike', -5.6, 27, 0, 0x111111);
-  add('suv', 94.3, 150, 0, 0xfafafa);
-  add('bicycle', -9.5, 30, 0, 0xe65100);
+  const addL = (type, lx, lz, lh, color) => { const p = cityPt(lx, lz); add(type, p.x, p.z, lh + cityAngle(lx, lz) + Math.PI / 2, color); };
+  addL('sports', -5.6, 40, -Math.PI / 2, 0xc62828);
+  addL('bike', -5.6, 27, -Math.PI / 2, 0x111111);
+  addL('suv', 94.3, 150, -Math.PI / 2, 0xfafafa);
+  addL('bicycle', -9.5, 30, -Math.PI / 2, 0xe65100);
   add('racecar', 1250, 150, Math.PI / 2, 0xc62828);
   add('tractor', TOWNS[2].x - 30, TOWNS[2].z + 25, 1, 0x2e7d32);
   add('luxury', TOWNS[1].x + 20, TOWNS[1].z + 30, 0, 0x212121);
@@ -340,8 +346,9 @@ export function setupFixedVehicles() {
   add('pickup', TOWNS[2].x + 20, TOWNS[2].z + 10, 0, 0x2e7d32);
   add('bike', TOWNS[1].x + 15, TOWNS[1].z - 40, 0, 0x1565c0);
   add('sports', TOWNS[1].x - 30, TOWNS[1].z - 50, 0, 0xffeb3b);
-  add('police', SPECIAL.police.spawnX - 12, SPECIAL.police.spawnZ, 0);
-  add('police', SPECIAL.police.spawnX + 12, SPECIAL.police.spawnZ, 0);
+  const pa = SPECIAL.police.h;
+  add('police', SPECIAL.police.spawnX - Math.cos(pa) * 12, SPECIAL.police.spawnZ + Math.sin(pa) * 12, pa);
+  add('police', SPECIAL.police.spawnX + Math.cos(pa) * 12, SPECIAL.police.spawnZ - Math.sin(pa) * 12, pa);
   void hb; void A;
   for (const f of FIXED) spawnFixed(f);
 }

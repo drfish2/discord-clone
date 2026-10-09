@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, GRAV, WATER, clamp, damp, rand, pick, angWrap, emit, on } from './core.js';
 import {
-  groundHeight, collideCircle, isWater, blockType, cornerPos, walkableBlock, CL, GANGS, TOWNS, terrainHeight, losClear,
+  groundHeight, collideCircle, isWater, blockType, cornerPos, walkableBlock, CL, GANGS, TOWNS, terrainHeight, losClear, toLogical, waterLevel,
 } from './terrain.js';
 import { buildHuman, SKINS, SHIRTS, PANTS, HAIRS } from './models.js';
 import { spawn } from './fx.js';
@@ -130,11 +130,13 @@ export class Ped {
       this.onGround = true;
     } else if (this.pos.y > gh + 0.25) this.onGround = false;
     else if (this.vy <= 0) { this.pos.y = gh; this.vy = 0; this.onGround = true; }
-    if (this.pos.y < WATER - 1.2 && isWater(this.pos.x, this.pos.z)) {
+    const wl = waterLevel(this.pos.x, this.pos.z);
+    this.waterY = wl;
+    if (this.pos.y < wl - 1.2 && isWater(this.pos.x, this.pos.z)) {
       this.swim = true;
-      if (this.vy < -6 && !this.splashed) { spawn('splash', this.pos.x, WATER, this.pos.z, 20, 1.5, 0, 5, 0); }
+      if (this.vy < -6 && !this.splashed) { spawn('splash', this.pos.x, wl, this.pos.z, 20, 1.5, 0, 5, 0); }
       this.splashed = true;
-      this.pos.y = Math.max(this.pos.y, WATER - 1.3);
+      this.pos.y = Math.max(this.pos.y, wl - 1.3);
       this.vy = Math.max(this.vy, 0);
       this.onGround = true;
     } else this.splashed = false;
@@ -167,7 +169,7 @@ export class Ped {
     const sp = Math.hypot(this.vel.x, this.vel.z);
     if (this.swim) {
       this.phase += dt * 5;
-      r.position.y = WATER - 1.25;
+      r.position.y = (this.waterY ?? WATER) - 1.25;
       P.lift = true;
       P.armL = Math.sin(this.phase) * 0.8;
       P.armR = -Math.sin(this.phase) * 0.8;
@@ -270,9 +272,10 @@ export class Ped {
   }
 
   pickNearestCorner() {
-    const bi = clamp(Math.floor((this.pos.x + 800) / 100), 0, 15), bj = clamp(Math.floor((this.pos.z + 800) / 100), 0, 15);
+    const l = toLogical(this.pos.x, this.pos.z);
+    const bi = clamp(Math.floor((l.x + 800) / 100), 0, 15), bj = clamp(Math.floor((l.z + 800) / 100), 0, 15);
     if (!walkableBlock(bi, bj)) return;
-    const r = { bi, bj, cx: this.pos.x > CL[bi] + 50 ? 1 : 0, cz: this.pos.z > CL[bj] + 50 ? 1 : 0 };
+    const r = { bi, bj, cx: l.x > CL[bi] + 50 ? 1 : 0, cz: l.z > CL[bj] + 50 ? 1 : 0 };
     this.corner = r;
   }
   nextCorner() {
@@ -445,7 +448,8 @@ function spawnCityPed(px, pz) {
   for (let tries = 0; tries < 6; tries++) {
     const a = Math.random() * Math.PI * 2, r = rand(40, 170);
     const x = px + Math.cos(a) * r, z = pz + Math.sin(a) * r;
-    const bi = Math.floor((x + 800) / 100), bj = Math.floor((z + 800) / 100);
+    const l = toLogical(x, z);
+    const bi = Math.floor((l.x + 800) / 100), bj = Math.floor((l.z + 800) / 100);
     if (!walkableBlock(bi, bj)) continue;
     if (blockType[bi][bj].startsWith('gang')) continue;
     const c = { bi, bj, cx: Math.random() < 0.5 ? 1 : 0, cz: Math.random() < 0.5 ? 1 : 0 };

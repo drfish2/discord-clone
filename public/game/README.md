@@ -14,7 +14,8 @@ Vehicles, people, city buildings, street furniture, trees, sound effects and rad
 
 A procedurally generated island on a 6 × 6 km map (fixed seed, so it's the same every time). The heightmap uses domain-warped noise for an irregular coastline with bays and offshore islets, and every road and town is kept on dry land. [`heightmap-preview.png`](heightmap-preview.png) shows it:
 
-- **City**: 16 × 16 street grid with downtown towers, midtown blocks, residential streets, parks, a plaza, police station, hospital and Pay 'n' Spray. The Crimson River runs through it under bridges.
+- **City**: winding streets laid out on a curl-noise-warped grid with an irregular edge, T-junctions and merged blocks. Downtown towers, midtown blocks, residential streets, parks, a plaza, police station, hospital and Pay 'n' Spray.
+- **Crimson River**: rises at a mountain tarn below Mt. Ember, meanders downhill through the west side of the city under bridges and reaches the sea on the southwest coast.
 - **Gang turf**: the Purple Kingz (northwest) and Red Vipers (southeast) hang out in groups and turn hostile if you shoot near them, attack them, or loiter.
 - **Airport** with a runway, hangars, stunt planes, a jet and helicopters.
 - **Red Dust Desert** with the town of Sandy Rock, cacti and stunt ramps.

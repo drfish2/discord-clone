@@ -1,7 +1,7 @@
 // Vehicle simulation: cars, bikes, helicopters, planes, boats.
 import * as THREE from 'three';
 import { G, GRAV, WATER, clamp, lerp, damp, emit, angWrap } from './core.js';
-import { groundHeight, collideCircle, isWater, terrainHeight } from './terrain.js';
+import { groundHeight, collideCircle, isWater, terrainHeight, waterLevel } from './terrain.js';
 import { buildVehicleMesh, VSPEC, wreckMat } from './models.js';
 
 const wreckModelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 1 });
@@ -33,7 +33,7 @@ export class Vehicle {
     this.root = m.root;
     this.root.rotation.order = 'YXZ';
     this.pos = new THREE.Vector3(x, y ?? groundHeight(x, z) + 0.05, z);
-    if (this.kind === 'boat') this.pos.y = WATER;
+    if (this.kind === 'boat') this.pos.y = waterLevel(x, z);
     this.vel = new THREE.Vector3();
     this.vy = 0;
     this.heading = heading;
@@ -248,10 +248,11 @@ export class Vehicle {
       this.air += dt;
     }
     // water
-    if (this.pos.y < WATER - 0.6 && isWater(this.pos.x, this.pos.z)) {
+    const wl = waterLevel(this.pos.x, this.pos.z);
+    if (this.pos.y < wl - 0.6 && isWater(this.pos.x, this.pos.z)) {
       if (!this.drowned) {
         this.drowned = 0.01;
-        spawn('splash', this.pos.x, WATER + 0.3, this.pos.z, 40, 3, 0, 6, 0);
+        spawn('splash', this.pos.x, wl + 0.3, this.pos.z, 40, 3, 0, 6, 0);
         emit('vehicleDrowned', this);
       }
       this.vy = Math.max(this.vy, -1.5);
@@ -340,8 +341,9 @@ export class Vehicle {
       this.onGround = true;
       if (this.dead && !this.crashed) { this.crashed = true; explosionFx(this.pos.x, this.pos.y, this.pos.z, 1.2); emit('explosion', this.pos.clone(), 8, null, this); }
     } else if (this.pos.y > gh + 0.2) this.onGround = false;
-    if (this.pos.y < WATER - 0.5 && isWater(this.pos.x, this.pos.z)) {
-      if (!this.drowned) { this.drowned = 0.01; spawn('splash', this.pos.x, WATER, this.pos.z, 50, 4, 0, 8, 0); emit('vehicleDrowned', this); }
+    const hwl = waterLevel(this.pos.x, this.pos.z);
+    if (this.pos.y < hwl - 0.5 && isWater(this.pos.x, this.pos.z)) {
+      if (!this.drowned) { this.drowned = 0.01; spawn('splash', this.pos.x, hwl, this.pos.z, 50, 4, 0, 8, 0); emit('vehicleDrowned', this); }
       this.drowned += dt;
       this.vy = Math.max(this.vy, -1);
       if (this.drowned > 12 && !this.persist) this.removeT = 0.01;
@@ -415,11 +417,12 @@ export class Vehicle {
       this.pos.y = gh;
       this.onGround = true;
     } else if (this.pos.y > gh + 0.4) this.onGround = false;
-    if (this.pos.y < WATER - 0.3 && isWater(this.pos.x, this.pos.z)) {
-      if (!this.drowned) { this.drowned = 0.01; spawn('splash', this.pos.x, WATER, this.pos.z, 60, 4, 0, 8, 0); if (this.speed > 25) this.damage(999); emit('vehicleDrowned', this); }
+    const pwl = waterLevel(this.pos.x, this.pos.z);
+    if (this.pos.y < pwl - 0.3 && isWater(this.pos.x, this.pos.z)) {
+      if (!this.drowned) { this.drowned = 0.01; spawn('splash', this.pos.x, pwl, this.pos.z, 60, 4, 0, 8, 0); if (this.speed > 25) this.damage(999); emit('vehicleDrowned', this); }
       this.drowned += dt;
       this.speed *= Math.max(0, 1 - 2 * dt);
-      this.pos.y = Math.max(this.pos.y, WATER - 1.2);
+      this.pos.y = Math.max(this.pos.y, pwl - 1.2);
       if (this.drowned > 14 && !this.persist) this.removeT = 0.01;
     }
     if (this.pos.y > 1500) this.pos.y = 1500;
@@ -436,6 +439,7 @@ export class Vehicle {
     let vf = this.vel.x * fx + this.vel.z * fz;
     let vr = this.vel.x * rx + this.vel.z * rz;
     const afloat = isWater(this.pos.x, this.pos.z);
+    const bwl = waterLevel(this.pos.x, this.pos.z);
     if (!this.dead && afloat) {
       if (I.throttle > 0) vf += s.accel * I.throttle * Math.max(0, 1 - vf / s.speed) * dt;
       else if (I.throttle < 0) vf += (vf > 0 ? 18 : 6) * I.throttle * dt;
@@ -445,10 +449,10 @@ export class Vehicle {
       vr *= Math.max(0, 1 - s.grip * dt);
       this.vel.x = fx * vf + rx * vr;
       this.vel.z = fz * vf + rz * vr;
-      if (Math.abs(vf) > 5 && Math.random() < dt * 30) spawn('splash', this.pos.x - fx * 2.5 + rx * (Math.random() - 0.5) * 2, WATER + 0.2, this.pos.z - fz * 2.5 + rz * (Math.random() - 0.5) * 2, 1, 0.5, -fx * 2, 2, -fz * 2);
+      if (Math.abs(vf) > 5 && Math.random() < dt * 30) spawn('splash', this.pos.x - fx * 2.5 + rx * (Math.random() - 0.5) * 2, bwl + 0.2, this.pos.z - fz * 2.5 + rz * (Math.random() - 0.5) * 2, 1, 0.5, -fx * 2, 2, -fz * 2);
     } else this.vel.multiplyScalar(Math.max(0, 1 - 3 * dt));
     const nx = this.pos.x + this.vel.x * dt, nz = this.pos.z + this.vel.z * dt;
-    const ahead = isWater(nx + fx * 2.5, nz + fz * 2.5) || terrainHeight(nx + fx * 2.5, nz + fz * 2.5) < WATER - 0.2;
+    const ahead = isWater(nx + fx * 2.5, nz + fz * 2.5) || terrainHeight(nx + fx * 2.5, nz + fz * 2.5) < bwl - 0.2;
     if (ahead || !afloat) {
       this.pos.x = nx;
       this.pos.z = nz;
@@ -458,7 +462,7 @@ export class Vehicle {
       if (imp > 8) this.damage(imp * 2);
     }
     const gh = terrainHeight(this.pos.x, this.pos.z);
-    const target = afloat ? WATER - 0.35 + Math.sin(G.time * 2 + this.id) * 0.08 : Math.max(gh, WATER - 0.35);
+    const target = afloat ? bwl - 0.35 + Math.sin(G.time * 2 + this.id) * 0.08 : Math.max(gh, bwl - 0.35);
     this.pos.y = damp(this.pos.y, target, 6, dt);
     this.pitch = damp(this.pitch, afloat ? clamp(vf / s.speed, 0, 1) * 0.12 : 0, 3, dt);
     this.roll = damp(this.roll, -this.steer * 0.12 * clamp(vf / 15, 0, 1), 3, dt);

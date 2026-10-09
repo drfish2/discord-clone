@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, resetStats, on, clamp } from './core.js';
 import { buildWorld, updateWorld } from './world.js';
-import { SPECIAL, groundHeight } from './terrain.js';
+import { SPECIAL, groundHeight, cityPt, cityAngle } from './terrain.js';
 import { initFx, updateFx, setFxScale } from './fx.js';
 import { Player } from './player.js';
 import { updatePeds, vehiclePedCollisions } from './characters.js';
@@ -18,7 +18,7 @@ import { loadModels } from './assets.js';
 import { loadSounds } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
-const START = { x: -9.5, z: 43 };
+const START = { x: -8.9, z: 40 }; // logical city coordinates (see terrain.cityPt)
 let renderer, scene, camera;
 const focus = new THREE.Vector3();
 
@@ -64,9 +64,10 @@ async function boot() {
   buildMapImage();
   setLoading('Waking up the city…', 80);
   await nextFrame();
-  G.player = new Player(START.x, START.z);
-  G.player.heading = 0;
-  G.camYaw = 0;
+  const sp = cityPt(START.x, START.z);
+  G.player = new Player(sp.x, sp.z);
+  G.player.heading = cityAngle(START.x, START.z);
+  G.camYaw = G.player.heading;
   setupFixedVehicles();
   initMissions();
   resetStats();
@@ -315,7 +316,7 @@ function update(dt) {
   updateHud(dt);
   updateAudio(dt);
   // fell out of the world
-  if (P.pos.y < -60 && !P.vehicle) P.reset(START.x, START.z);
+  if (P.pos.y < -60 && !P.vehicle) { const sp = cityPt(START.x, START.z); P.reset(sp.x, sp.z); }
 }
 
 on('enterVehicle', (v) => {

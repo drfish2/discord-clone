@@ -12,7 +12,6 @@ export const CL = [];
 for (let i = 0; i <= 16; i++) CL.push(-800 + i * 100);
 export const ROAD_W = 14;
 export const HWY_W = 16;
-export const RIVER_COL = 4;
 
 export const AIRPORT = { x0: 1000, x1: 2400, z0: -350, z1: 350, runwayZ: -120, runwayX0: 1150, runwayX1: 2300, runwayW: 50 };
 export const TOWNS = [
@@ -22,17 +21,96 @@ export const TOWNS = [
   { name: 'Mt. Ember Observatory', x: 300, z: -2450, r: 90, n: 0, style: 'obs' },
 ];
 export const LAKE = { x: -1950, z: 700, r: 180 };
-export const RIVER = [
-  [-150, -3150], [-300, -2500], [-520, -1900], [-480, -1350], [-350, -950], [-350, -800],
-  [-350, 850], [-380, 1100], [-250, 1700], [-80, 2300], [0, 3150],
+// The Crimson River: rises at a tarn on Ember Ridge, meanders through the west of
+// the city and reaches the sea on the south-west coast.
+const RIVER_CTRL = [
+  [-180, -1800], [-330, -1500], [-520, -1150], [-470, -830], [-300, -450], [-430, -50], [-230, 380],
+  [-360, 760], [-560, 1250], [-850, 1800], [-1100, 2300], [-1300, 2850],
 ];
 export const GANGS = [
   { id: 'kingz', name: 'Purple Kingz', color: 0x7b3fc4, css: '#9b5de5', bi0: 0, bi1: 3, bj0: 1, bj1: 4 },
   { id: 'vipers', name: 'Red Vipers', color: 0xc62828, css: '#e53935', bi0: 12, bi1: 15, bj0: 11, bj1: 14 },
 ];
+
+// ---------------------------------------------------------------- city warp
+// The street grid is laid out in "logical" coordinates and bent into the world by a
+// smooth displacement field, so streets curve and blocks vary in size and angle.
+const WG = 10, WR = 1200, WN = (2 * WR) / WG + 1;
+const WDX = new Float32Array(WN * WN), WDZ = new Float32Array(WN * WN);
+// curl of a smooth potential: a divergence-free flow, so streets bend and swirl
+// without whole districts being squashed or stretched
+export let WARP_K = 9500;
+{
+  const PSI = new Float32Array(WN * WN);
+  for (let j = 0; j < WN; j++)
+    for (let i = 0; i < WN; i++) {
+      const lx = -WR + i * WG, lz = -WR + j * WG;
+      PSI[j * WN + i] = noise2(lx * 0.0009 + 31.7, lz * 0.0009 - 12.2) + 0.3 * noise2(lx * 0.0019 + 4.1, lz * 0.0019 - 9.3);
+    }
+  for (let j = 0; j < WN; j++)
+    for (let i = 0; i < WN; i++) {
+      const lx = -WR + i * WG, lz = -WR + j * WG;
+      const fade = 1 - sstep(780, 1100, Math.max(Math.abs(lx), Math.abs(lz)));
+      const ip = Math.min(WN - 1, i + 1), im = Math.max(0, i - 1), jp = Math.min(WN - 1, j + 1), jm = Math.max(0, j - 1);
+      const dPdx = (PSI[j * WN + ip] - PSI[j * WN + im]) / ((ip - im) * WG);
+      const dPdz = (PSI[jp * WN + i] - PSI[jm * WN + i]) / ((jp - jm) * WG);
+      WDX[j * WN + i] = fade * WARP_K * dPdz;
+      WDZ[j * WN + i] = -fade * WARP_K * dPdx;
+    }
+}
+const WD = { x: 0, z: 0 };
+function warpD(lx, lz) {
+  const fx = (lx + WR) / WG, fz = (lz + WR) / WG;
+  if (fx < 0 || fz < 0 || fx >= WN - 1 || fz >= WN - 1) { WD.x = WD.z = 0; return WD; }
+  const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j;
+  const o = j * WN + i;
+  WD.x = lerp(lerp(WDX[o], WDX[o + 1], tx), lerp(WDX[o + WN], WDX[o + WN + 1], tx), tz);
+  WD.z = lerp(lerp(WDZ[o], WDZ[o + 1], tx), lerp(WDZ[o + WN], WDZ[o + WN + 1], tx), tz);
+  return WD;
+}
+// logical -> world
+export function cityPt(lx, lz, out = {}) {
+  warpD(lx, lz);
+  out.x = lx + WD.x;
+  out.z = lz + WD.z;
+  return out;
+}
+// world -> logical (fixed-point inverse of the smooth warp)
+const LP = { x: 0, z: 0 };
+export function toLogical(x, z, out = LP) {
+  let lx = x, lz = z;
+  for (let k = 0; k < 4; k++) {
+    warpD(lx, lz);
+    lx = x - WD.x;
+    lz = z - WD.z;
+  }
+  out.x = lx;
+  out.z = lz;
+  return out;
+}
+// how much the logical x axis is turned at a point (radians, three.js Y rotation)
+const _a = {}, _b = {};
+export function cityAngle(lx, lz) {
+  cityPt(lx - 4, lz, _a);
+  cityPt(lx + 4, lz, _b);
+  return Math.atan2(_b.x - _a.x, _b.z - _a.z) - Math.PI / 2;
+}
+// Irregular city outline in logical space: 1 inside, 0 outside (soft edge).
+export function cityShapeL(lx, lz) {
+  const r = Math.pow(Math.pow(Math.abs(lx), 3) + Math.pow(Math.abs(lz), 3), 1 / 3);
+  const a = Math.atan2(lz, lx);
+  const R = 700 + 150 * fbm(Math.cos(a) * 1.4 + 3.3, Math.sin(a) * 1.4 - 7.1, 3);
+  return 1 - sstep(R - 30, R + 160, r);
+}
+export function cityShape(x, z) {
+  if (Math.abs(x) > 1150 || Math.abs(z) > 1150) return 0;
+  const l = toLogical(x, z);
+  return cityShapeL(l.x, l.z);
+}
 for (const g of GANGS) {
   g.x0 = CL[g.bi0]; g.x1 = CL[g.bi1 + 1]; g.z0 = CL[g.bj0]; g.z1 = CL[g.bj1 + 1];
-  g.cx = (g.x0 + g.x1) / 2; g.cz = (g.z0 + g.z1) / 2;
+  const c = cityPt((g.x0 + g.x1) / 2, (g.z0 + g.z1) / 2);
+  g.cx = c.x; g.cz = c.z;
 }
 
 const R = mulberry32(4242);
@@ -110,7 +188,7 @@ export function baseHeight(x, z) {
     if (d < t.r + 120) h = lerp(t.h, h, sstep(t.r, t.r + 120, d));
   }
   const ce = Math.max(Math.abs(x), Math.abs(z));
-  h = lerp(2.9, h, sstep(830, 1050, ce));
+  h = lerp(h, 2.9, cityShape(x, z));
   const ad = rectDist(x, z, AIRPORT.x0, AIRPORT.x1, AIRPORT.z0, AIRPORT.z1);
   h = lerp(2.9, h, sstep(0, 160, ad));
   // sea floor beyond the island's coastline; land ramps down into beaches
@@ -127,27 +205,147 @@ function segDist(x, z, ax, az, bx, bz) {
   t = clamp(t, 0, 1);
   return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
 }
-export function riverDist(x, z) {
-  let d = Infinity;
-  for (let i = 0; i < RIVER.length - 1; i++) {
-    const a = RIVER[i], b = RIVER[i + 1];
-    const dd = segDist(x, z, a[0], a[1], b[0], b[1]);
-    if (dd < d) d = dd;
+
+// ---------------------------------------------------------------- river
+// RIVER_PATH: samples {x,z,surf,bed,hw} from source to mouth. surf is the water surface
+// height (0 = sea level), so the upper river flows downhill above sea level.
+export const RIVER_PATH = [];
+export const TARN = { x: 0, z: 0, r: 42, surf: 0 };
+const RVG = 80;
+const rGrid = new Map();
+function genRiver() {
+  const P = RIVER_CTRL;
+  const raw = [];
+  for (let k = 0; k < P.length - 1; k++) {
+    const p0 = P[Math.max(0, k - 1)], p1 = P[k], p2 = P[k + 1], p3 = P[Math.min(P.length - 1, k + 2)];
+    const n = Math.max(2, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 6));
+    for (let s = k === 0 ? 0 : 1; s <= n; s++) {
+      const t = s / n;
+      raw.push([catmull(p0[0], p1[0], p2[0], p3[0], t), catmull(p0[1], p1[1], p2[1], p3[1], t)]);
+    }
   }
-  return d;
+  // meander: sideways offsets that grow downstream, gentler inside the city
+  let arc = 0;
+  const mean = raw.map((p, i) => {
+    if (i > 0) arc += Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1]);
+    const q = raw[Math.min(raw.length - 1, i + 1)], o = raw[Math.max(0, i - 1)];
+    let tx = q[0] - o[0], tz = q[1] - o[1];
+    const tl = Math.hypot(tx, tz) || 1;
+    tx /= tl; tz /= tl;
+    const city = 1 - 0.65 * (1 - sstep(700, 950, Math.max(Math.abs(p[0]), Math.abs(p[1]))));
+    const amp = 62 * city * sstep(0, 400, arc);
+    const m = amp * (0.7 * Math.sin(arc / 165 + 0.5) + 0.3 * Math.sin(arc / 68 + 2.0));
+    return [p[0] - tz * m, p[1] + tx * m];
+  });
+  // resample evenly every 12 m and stop a little way out to sea
+  const pts = [mean[0]];
+  let acc = 0;
+  for (let i = 1; i < mean.length; i++) {
+    const a = mean[i - 1], b = mean[i];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    acc += l;
+    if (acc >= 12) { pts.push(b); acc = 0; }
+  }
+  let seaCount = 0;
+  const N0 = pts.length;
+  for (let i = 0; i < N0; i++) {
+    const [x, z] = pts[i];
+    const g = baseHeight(x, z);
+    if (g < -3) seaCount++;
+    RIVER_PATH.push({ x, z, g, surf: 0, bed: 0, hw: 0 });
+    if (seaCount > 12) break;
+  }
+  const N = RIVER_PATH.length;
+  // water surface: never rises downstream, follows the valley floor, reaches 0 in the lowlands
+  let run = Infinity;
+  for (const r of RIVER_PATH) {
+    run = Math.min(run, r.g - 3);
+    r.surf = Math.max(0, run - 1);
+  }
+  for (let pass = 0; pass < 4; pass++) {
+    const o = RIVER_PATH.map((r) => r.surf);
+    for (let i = 0; i < N; i++) {
+      let sum = 0, c = 0;
+      for (let k = -3; k <= 3; k++) { const j = clamp(i + k, 0, N - 1); sum += o[j]; c++; }
+      RIVER_PATH[i].surf = sum / c;
+    }
+    let m = Infinity;
+    for (const r of RIVER_PATH) { m = Math.min(m, r.surf); r.surf = m; }
+  }
+  RIVER_PATH.forEach((r, i) => {
+    const t = i / (N - 1);
+    const inCity = 1 - sstep(780, 950, Math.max(Math.abs(r.x), Math.abs(r.z)));
+    r.hw = lerp(lerp(7, 30, Math.pow(t, 0.85)), 19, inCity);
+    r.bed = r.surf - lerp(1.6, 5, t);
+  });
+  TARN.x = RIVER_PATH[0].x;
+  TARN.z = RIVER_PATH[0].z;
+  TARN.surf = RIVER_PATH[0].surf;
+  // spatial hash of river segments (with room for the valley banks)
+  for (let i = 0; i < N - 1; i++) {
+    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
+    const m = 220;
+    const x0 = Math.floor((Math.min(a.x, b.x) - m) / RVG), x1 = Math.floor((Math.max(a.x, b.x) + m) / RVG);
+    const z0 = Math.floor((Math.min(a.z, b.z) - m) / RVG), z1 = Math.floor((Math.max(a.z, b.z) + m) / RVG);
+    for (let gi = x0; gi <= x1; gi++)
+      for (let gj = z0; gj <= z1; gj++) {
+        const k = gk(gi, gj);
+        let l = rGrid.get(k);
+        if (!l) rGrid.set(k, (l = []));
+        l.push(i);
+      }
+  }
+}
+// nearest point on the river: {d, surf, bed, hw, i}; d = Infinity when far away
+export const RQ = { d: Infinity, surf: 0, bed: 0, hw: 0, i: 0 };
+export function riverQuery(x, z) {
+  RQ.d = Infinity;
+  const l = rGrid.get(gk(Math.floor(x / RVG), Math.floor(z / RVG)));
+  if (!l) return RQ;
+  for (const i of l) {
+    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz), 0, 1);
+    const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+    if (d < RQ.d) {
+      RQ.d = d;
+      RQ.surf = lerp(a.surf, b.surf, t);
+      RQ.bed = lerp(a.bed, b.bed, t);
+      RQ.hw = lerp(a.hw, b.hw, t);
+      RQ.i = i + t;
+    }
+  }
+  return RQ;
+}
+export function riverDist(x, z) {
+  return riverQuery(x, z).d;
 }
 function carve(x, z, h) {
-  const d = riverDist(x, z);
-  const hw = 28;
-  if (d < hw) h = Math.min(h, -7);
-  else {
-    const e = d - hw;
-    h = Math.min(h, -7 + e * 0.9 + e * e * 0.004);
+  const r = riverQuery(x, z);
+  if (r.d < Infinity) {
+    if (r.d < r.hw) h = Math.min(h, r.bed);
+    else {
+      const e = r.d - r.hw;
+      h = Math.min(h, r.surf + 0.6 + e * 0.55 + e * e * 0.01);
+    }
+  }
+  const dt = Math.hypot(x - TARN.x, z - TARN.z);
+  if (dt < 160) {
+    const e = Math.max(0, dt - TARN.r);
+    h = Math.min(h, dt < TARN.r ? TARN.surf - 3 : TARN.surf + 0.6 + e * 0.5 + e * e * 0.01);
   }
   const dl = Math.hypot(x - LAKE.x, z - LAKE.z);
   const e2 = Math.max(0, dl - LAKE.r);
   h = Math.min(h, -6 + e2 * 0.35 + e2 * e2 * 0.004);
   return h;
+}
+// Height of the water surface at (x,z): the river/tarn where present, else sea level.
+export function waterLevel(x, z) {
+  const r = riverQuery(x, z);
+  let w = WATER;
+  if (r.d < r.hw + 3 && r.surf > w) w = r.surf;
+  if (Math.hypot(x - TARN.x, z - TARN.z) < TARN.r + 3) w = Math.max(w, TARN.surf);
+  return w;
 }
 
 // ---------------------------------------------------------------- roads
@@ -190,15 +388,69 @@ function catmull(p0, p1, p2, p3, t) {
   return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }
 
+// streets removed from the grid to make T-junctions and bigger, irregular blocks
+export const removedV = []; // removedV[i][j]: line x=CL[i] between rows j and j+1
+export const removedH = []; // removedH[j][i]: line z=CL[j] between columns i and i+1
+export const cityStreets = []; // node lists of each street between junctions (for rendering)
+export const junctions = []; // city intersection nodes {n, deg}
+const gridNode = []; // gridNode[i][j]
+function pickRemovedStreets() {
+  for (let i = 0; i <= 16; i++) { removedV[i] = Array(16).fill(false); removedH[i] = Array(16).fill(false); }
+  const deg = [];
+  for (let i = 0; i <= 16; i++) { deg[i] = []; for (let j = 0; j <= 16; j++) deg[i][j] = (i > 0) + (i < 16) + (j > 0) + (j < 16); }
+  const solid = (bi, bj) => bi >= 0 && bj >= 0 && bi < 16 && bj < 16 && ['res', 'mid', 'down', 'park'].includes(blockType[bi][bj]);
+  let removed = 0;
+  for (let tries = 0; tries < 4000 && removed < 60; tries++) {
+    const vert = R() < 0.5;
+    const i = 1 + Math.floor(R() * 15), j = Math.floor(R() * 16);
+    if (vert) {
+      if (removedV[i][j] || deg[i][j] < 3 || deg[i][j + 1] < 3 || !solid(i - 1, j) || !solid(i, j)) continue;
+      if (blockType[i - 1][j] !== blockType[i][j] && R() < 0.7) continue;
+      removedV[i][j] = true; deg[i][j]--; deg[i][j + 1]--;
+    } else {
+      if (removedH[i][j] || deg[j][i] < 3 || deg[j + 1][i] < 3 || !solid(j, i - 1) || !solid(j, i)) continue;
+      if (blockType[j][i - 1] !== blockType[j][i] && R() < 0.7) continue;
+      removedH[i][j] = true; deg[j][i]--; deg[j + 1][i]--;
+    }
+    removed++;
+  }
+}
+
 function buildRoads() {
-  // city grid
-  for (let i = 0; i <= 16; i++) for (let j = 0; j <= 16; j++) addNode(CL[i], CL[j], CITY_H);
+  // warped city grid: junction nodes plus intermediate nodes so streets can curve
+  const SUB = 5;
+  for (let i = 0; i <= 16; i++) {
+    gridNode[i] = [];
+    for (let j = 0; j <= 16; j++) {
+      const p = cityPt(CL[i], CL[j]);
+      gridNode[i][j] = addNode(p.x, p.z, CITY_H);
+    }
+  }
+  // a street exists if at least one neighbouring block is part of the city
+  const live = (bi, bj) => bi >= 0 && bj >= 0 && bi < 16 && bj < 16 && blockType[bi][bj] !== 'void';
+  const street = (a, b, la, lb) => {
+    const list = [a];
+    let prev = a;
+    for (let k = 1; k < SUB; k++) {
+      const t = k / SUB;
+      const p = cityPt(lerp(la[0], lb[0], t), lerp(la[1], lb[1], t));
+      const n = addNode(p.x, p.z, CITY_H);
+      link(prev, n, ROAD_W, 'city', 'street');
+      list.push(n);
+      prev = n;
+    }
+    link(prev, b, ROAD_W, 'city', 'street');
+    list.push(b);
+    cityStreets.push(list);
+  };
   for (let i = 0; i <= 16; i++)
     for (let j = 0; j <= 16; j++) {
-      const n = nodeMap.get(nkey(CL[i], CL[j]));
-      if (i < 16) link(n, nodeMap.get(nkey(CL[i + 1], CL[j])), ROAD_W, 'city', 'street');
-      if (j < 16) link(n, nodeMap.get(nkey(CL[i], CL[j + 1])), ROAD_W, 'city', 'street');
+      if (i < 16 && !(j > 0 && j < 16 && removedH[j][i]) && (live(i, j - 1) || live(i, j))) street(gridNode[i][j], gridNode[i + 1][j], [CL[i], CL[j]], [CL[i + 1], CL[j]]);
+      if (j < 16 && !(i > 0 && i < 16 && removedV[i][j]) && (live(i - 1, j) || live(i, j))) street(gridNode[i][j], gridNode[i][j + 1], [CL[i], CL[j]], [CL[i], CL[j + 1]]);
     }
+  for (let i = 0; i <= 16; i++) for (let j = 0; j <= 16; j++) junctions.push({ n: gridNode[i][j], deg: gridNode[i][j].edges.length, i, j });
+  // highways start at warped city edge junctions
+  for (const hw of HIGHWAYS) hw.pts = hw.pts.map(([x, z]) => (Math.abs(x) <= 800 && Math.abs(z) <= 800 ? (({ x: wx, z: wz }) => [wx, wz])(cityPt(x, z)) : [x, z]));
   // highways
   for (const hw of HIGHWAYS) {
     const P = hw.pts;
@@ -321,7 +573,7 @@ function genTerrain() {
         else if (r.d < inner + blend) h = lerp(r.h - 0.25, h, sstep(inner, inner + blend, r.d));
       }
       const ce = Math.max(Math.abs(x), Math.abs(z));
-      if (ce < 815) h = Math.min(h, 2.8);
+      if (ce < 1150 && cityShape(x, z) > 0.6) h = Math.min(h, 2.8);
       h = carve(x, z, h);
       H[j * (TN + 1) + i] = h;
     }
@@ -349,24 +601,43 @@ export function terrainHeight(x, z) {
 }
 
 // ---------------------------------------------------------------- city blocks
+// Blocks live in logical (unwarped) coordinates; world positions go through cityPt().
 export const blockType = []; // [bi][bj]
 export function blockRect(bi, bj) {
   return { x0: CL[bi] + 7, x1: CL[bi + 1] - 7, z0: CL[bj] + 7, z1: CL[bj + 1] - 7 };
 }
-export function blockAt(x, z) {
-  if (x <= -793 || x >= 793 || z <= -793 || z >= 793) return null;
-  const bi = Math.floor((x + 800) / 100), bj = Math.floor((z + 800) / 100);
-  const lx = x - CL[bi], lz = z - CL[bj];
-  if (lx < 7 || lx > 93 || lz < 7 || lz > 93) return null;
-  return blockType[bi][bj] === 'river' ? null : BA.set(bi, bj);
-}
 const BA = { bi: 0, bj: 0, set(i, j) { this.bi = i; this.bj = j; return this; } };
+// Block (sidewalk slab) at a logical point, including the strips left by removed streets.
+export function blockAtL(lx, lz) {
+  if (lx <= -800 || lx >= 800 || lz <= -800 || lz >= 800) return null;
+  const bi = Math.min(15, Math.floor((lx + 800) / 100)), bj = Math.min(15, Math.floor((lz + 800) / 100));
+  const ux = lx - CL[bi], uz = lz - CL[bj];
+  const inX = ux >= 7 && ux <= 93, inZ = uz >= 7 && uz <= 93;
+  let ok = inX && inZ;
+  if (!ok && inZ && removedV.length) ok = (ux < 7 && removedV[bi][bj]) || (ux > 93 && removedV[bi + 1][bj]);
+  if (!ok && inX && removedH.length) ok = (uz < 7 && removedH[bj][bi]) || (uz > 93 && removedH[bj + 1][bi]);
+  if (!ok) return null;
+  return blockType[bi] && blockType[bi][bj] !== 'river' && blockType[bi][bj] !== 'void' ? BA.set(bi, bj) : null;
+}
+export function blockAt(x, z) {
+  if (x <= -900 || x >= 900 || z <= -900 || z >= 900 || !blockType.length) return null;
+  const l = toLogical(x, z);
+  return blockAtL(l.x, l.z);
+}
 export function slabTop(x, z) {
   return blockAt(x, z) ? SLAB_TOP : null;
 }
 export function gangAt(x, z) {
-  for (const g of GANGS) if (x > g.x0 && x < g.x1 && z > g.z0 && z < g.z1) return g;
+  if (Math.abs(x) > 900 || Math.abs(z) > 900) return null;
+  const l = toLogical(x, z);
+  for (const g of GANGS) if (l.x > g.x0 && l.x < g.x1 && l.z > g.z0 && l.z < g.z1) return g;
   return null;
+}
+export function inSpray(x, z) {
+  const s = SPECIAL.spray;
+  if (!s) return false;
+  const l = toLogical(x, z);
+  return l.x > s.lx0 && l.x < s.lx1 && l.z > s.lz0 && l.z < s.lz1;
 }
 
 export const SPECIAL = {};
@@ -404,18 +675,49 @@ function regCollider(o, x0, x1, z0, z1) {
       l.push(o);
     }
 }
-export function addBuilding(x0, x1, z0, z1, h, color, kind = 'tower', roof = null, y0) {
+// Oriented box building. (cx,cz) centre, half sizes hx/hz along its own axes, rot = Y rotation.
+export function addBox(cx, cz, hx, hz, rot, h, color, kind = 'tower', roof = null, y0) {
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  const ex = Math.abs(c) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(c) * hz;
   if (y0 === undefined) {
-    const g = [terrainHeight(x0, z0), terrainHeight(x1, z0), terrainHeight(x0, z1), terrainHeight(x1, z1)];
-    const blk = blockAt((x0 + x1) / 2, (z0 + z1) / 2);
+    const g = [terrainHeight(cx - ex, cz - ez), terrainHeight(cx + ex, cz - ez), terrainHeight(cx - ex, cz + ez), terrainHeight(cx + ex, cz + ez)];
+    const blk = blockAt(cx, cz);
     y0 = blk ? SLAB_TOP - 0.05 : Math.min(...g) - 0.5;
     h += blk ? 0 : Math.max(...g) - Math.min(...g) + 0.5;
   }
-  const b = { t: 0, x0, x1, z0, z1, y0, y1: y0 + h, color, roof, kind };
+  const b = { t: 0, cx, cz, hx, hz, rot, c, s: sn, x0: cx - ex, x1: cx + ex, z0: cz - ez, z1: cz + ez, y0, y1: y0 + h, color, roof, kind };
   buildings.push(b);
-  regCollider(b, x0, x1, z0, z1);
+  regCollider(b, b.x0, b.x1, b.z0, b.z1);
   return b;
 }
+// axis-aligned convenience (countryside, airport)
+export function addBuilding(x0, x1, z0, z1, h, color, kind = 'tower', roof = null, y0) {
+  return addBox((x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2, 0, h, color, kind, roof, y0);
+}
+// building placed in logical city space (bent and turned with the street grid)
+// local stretch of the warp along the logical axes (1 = unchanged)
+export function cityScale(lx, lz) {
+  cityPt(lx - 3, lz, _a); cityPt(lx + 3, lz, _b);
+  const sx = Math.hypot(_b.x - _a.x, _b.z - _a.z) / 6;
+  cityPt(lx, lz - 3, _a); cityPt(lx, lz + 3, _b);
+  const sz = Math.hypot(_b.x - _a.x, _b.z - _a.z) / 6;
+  return Math.min(1, sx, sz);
+}
+function addBuildingL(lcx, lcz, w, d, lrot, h, color, kind, roof = null) {
+  const p = cityPt(lcx, lcz);
+  // where the grid is squeezed, shrink the footprint so it stays inside its lot
+  const k = cityScale(lcx, lcz);
+  // KayKit models scale uniformly, so their height follows the same factor
+  const b = addBox(p.x, p.z, (w * k) / 2, (d * k) / 2, lrot + cityAngle(lcx, lcz), h * (kind === 'kk' ? k : 0.6 + 0.4 * k), color, kind, roof);
+  b.fit = k;
+  return b;
+}
+// point inside an oriented box (xz only)
+function inBox(o, x, z) {
+  const dx = x - o.cx, dz = z - o.cz;
+  return Math.abs(dx * o.c - dz * o.s) < o.hx && Math.abs(dx * o.s + dz * o.c) < o.hz;
+}
+
 function addTree(x, z, type, s) {
   const y = groundHeight(x, z);
   trees.push({ x, y, z, s, type });
@@ -436,7 +738,8 @@ const PALETTE = {
 };
 const ROOFS = [0x8b3a2b, 0x5a5a5a, 0x3e4d5c, 0x7a4b2a, 0x2f4f3a];
 
-function genCity() {
+// block types: zoning by distance from the centre, gang turf, river and specials
+function assignBlockTypes() {
   for (let bi = 0; bi < 16; bi++) {
     blockType[bi] = [];
     for (let bj = 0; bj < 16; bj++) {
@@ -445,22 +748,47 @@ function genCity() {
       let t = d < 300 ? 'down' : d < 560 ? 'mid' : 'res';
       if (R() < 0.06 && t !== 'down') t = 'park';
       for (const g of GANGS) if (bi >= g.bi0 && bi <= g.bi1 && bj >= g.bj0 && bj <= g.bj1) t = 'gang_' + g.id;
-      if (bi === RIVER_COL) t = 'river';
+      // the river claims blocks it runs through; blocks along its banks become parks
+      let near = Infinity;
+      for (const [u, v] of [[0.5, 0.5], [0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9], [0.5, 0.1], [0.5, 0.9], [0.1, 0.5], [0.9, 0.5]]) {
+        const p = cityPt(CL[bi] + 7 + u * 86, CL[bj] + 7 + v * 86);
+        const r = riverQuery(p.x, p.z);
+        near = Math.min(near, r.d - r.hw);
+      }
+      if (near < 6) t = 'river';
+      else if (near < 22 && !t.startsWith('gang')) t = 'park';
+      // outside the irregular city outline: countryside (gang turf stays as suburbs)
+      if (cityShapeL(c.x, c.z) < 0.5 && !t.startsWith('gang')) t = 'void';
       blockType[bi][bj] = t;
     }
   }
-  const set = (bi, bj, t) => (blockType[bi][bj] = t);
+  // keep a corridor of blocks along each street where a highway enters the city
+  for (const [x, z] of [[800, 0], [800, 800], [-800, -200], [0, -800], [0, 800]]) {
+    const i0 = (x + 800) / 100, j0 = (z + 800) / 100;
+    const di = i0 === 16 ? -1 : i0 === 0 ? 1 : 0, dj = j0 === 16 ? -1 : j0 === 0 ? 1 : 0;
+    for (let k = 0; k < 8; k++) {
+      const i = i0 + di * k, j = j0 + dj * k;
+      for (const [bi, bj] of di ? [[i - (di < 0 ? 1 : 0), j - 1], [i - (di < 0 ? 1 : 0), j]] : [[i - 1, j - (dj < 0 ? 1 : 0)], [i, j - (dj < 0 ? 1 : 0)]]) {
+        if (bi < 0 || bj < 0 || bi > 15 || bj > 15) continue;
+        if (blockType[bi][bj] === 'void') blockType[bi][bj] = 'res';
+      }
+    }
+  }
+  const set = (bi, bj, t) => { if (blockType[bi][bj] !== 'river') blockType[bi][bj] = t; };
   set(10, 2, 'park'); set(11, 2, 'park'); set(10, 3, 'park'); set(11, 3, 'park');
   set(8, 7, 'plaza');
   set(9, 5, 'police');
   set(6, 10, 'hospital');
   set(13, 8, 'spray');
-  set(14, 7, 'mid'); // keep spray block neighbour normal
+}
 
+function genCity() {
+  const W = (lx, lz) => cityPt(lx, lz);
+  const ang = (lx, lz) => cityAngle(lx, lz);
   for (let bi = 0; bi < 16; bi++)
     for (let bj = 0; bj < 16; bj++) {
       const t = blockType[bi][bj];
-      if (t === 'river') continue;
+      if (t === 'river' || t === 'void') continue;
       const r = blockRect(bi, bj);
       const ix0 = r.x0 + 3, ix1 = r.x1 - 3, iz0 = r.z0 + 3, iz1 = r.z1 - 3; // building area (80x80)
       const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
@@ -468,11 +796,12 @@ function genCity() {
         for (let a = 0; a < 2; a++)
           for (let b = 0; b < 2; b++) {
             const lx0 = ix0 + a * 41, lz0 = iz0 + b * 41;
-            const w = rr(24, 37), dd = rr(24, 37);
-            const x0 = lx0 + rr(0, 39 - w), z0 = lz0 + rr(0, 39 - dd);
-            const dc = Math.max(Math.abs(cx), Math.abs(cz));
-            const h = 35 + R() * R() * 170 * (1 - dc / 380) + R() * 20;
-            addBuilding(x0, x0 + w, z0, z0 + dd, h, PALETTE.down[Math.floor(R() * PALETTE.down.length)], 'tower');
+            const w = rr(24, 34), dd = rr(24, 34);
+            const x0 = lx0 + rr(1, 39 - w), z0 = lz0 + rr(1, 39 - dd);
+            const p = W(cx, cz);
+            const dc = Math.max(Math.abs(p.x), Math.abs(p.z));
+            const h = 35 + R() * R() * 170 * Math.max(0, 1 - dc / 380) + R() * 20;
+            addBuildingL(x0 + w / 2, z0 + dd / 2, w, dd, 0, h, PALETTE.down[Math.floor(R() * PALETTE.down.length)], 'tower');
           }
       } else if (t === 'mid' || t.startsWith('gang_') || t === 'res') {
         // KayKit buildings on a lot grid, fronts facing the nearest street
@@ -486,71 +815,81 @@ function genCity() {
             const lcx = ix0 + (a + 0.5) * cell, lcz = iz0 + (b + 0.5) * cell;
             const kind = mid ? KK_ALL[2 + Math.floor(R() * 6)] : KK_LOW[Math.floor(R() * 6)];
             const [kw, kd, kh] = KK[kind];
-            // face the closest block edge
             const dW = lcx - r.x0, dE = r.x1 - lcx, dN = lcz - r.z0, dS = r.z1 - lcz;
             const m = Math.min(dW, dE, dN, dS);
             const rot = m === dS ? 0 : m === dN ? Math.PI : m === dE ? Math.PI / 2 : -Math.PI / 2;
             const side = rot === Math.PI / 2 || rot === -Math.PI / 2;
-            const maxS = (cell - 2) / Math.max(kw, kd);
+            const maxS = (cell - 3) / Math.max(kw, kd);
             const sc = Math.min(maxS, mid ? rr(10, 12.5) : rr(7.5, 10.5));
             const wx = (side ? kd : kw) * sc, wz = (side ? kw : kd) * sc;
-            // push toward the street so facades line up
-            const push = (side ? cell - wx : cell - wz) / 2 - 1;
+            const push = (side ? cell - wx : cell - wz) / 2 - 1.5;
             const fx = Math.round(Math.sin(rot)), fz = Math.round(Math.cos(rot));
-            const cx2 = lcx + fx * push, cz2 = lcz + fz * push;
-            const bld = addBuilding(cx2 - wx / 2, cx2 + wx / 2, cz2 - wz / 2, cz2 + wz / 2, kh * sc, 0x9a8f80, 'kk');
+            const bld = addBuildingL(lcx + fx * push, lcz + fz * push, kw * sc, kd * sc, rot, kh * sc, 0x9a8f80, 'kk');
             bld.kk = kind;
-            bld.rot = rot;
-            bld.scale = sc;
+            bld.scale = sc * bld.fit;
           }
-        if (!mid) for (let k = 0; k < 3; k++) addTree(lerp(ix0, ix1, 0.42 + R() * 0.16), lerp(iz0, iz1, 0.42 + R() * 0.16), 'round', rr(0.8, 1.2));
-        props.push({ file: 'kk_dumpster', x: lerp(ix0, ix1, 0.5), z: lerp(iz0, iz1, 0.5) + 6, rot: R() * 6.28, h: 1.6 });
+        if (!mid) for (let k = 0; k < 3; k++) { const p = W(lerp(ix0, ix1, 0.42 + R() * 0.16), lerp(iz0, iz1, 0.42 + R() * 0.16)); addTree(p.x, p.z, 'round', rr(0.8, 1.2)); }
+        const dp = W(lerp(ix0, ix1, 0.5), lerp(iz0, iz1, 0.5) + 6);
+        props.push({ file: 'kk_dumpster', x: dp.x, z: dp.z, rot: R() * 6.28, h: 1.6 });
       } else if (t === 'park') {
-        for (let k = 0; k < 22; k++) addTree(rr(ix0, ix1), rr(iz0, iz1), 'round', rr(0.9, 1.5));
+        for (let k = 0; k < 22; k++) { const p = W(rr(ix0, ix1), rr(iz0, iz1)); addTree(p.x, p.z, 'round', rr(0.9, 1.5)); }
       } else if (t === 'plaza') {
-        decor.push({ x: cx, y: SLAB_TOP + 0.4, z: cz, sx: 14, sy: 0.8, sz: 14, rot: 0, color: 0xb9b2a5 });
-        decor.push({ x: cx, y: SLAB_TOP + 0.85, z: cz, sx: 12.5, sy: 0.15, sz: 12.5, rot: 0, color: 0x3d8fb5, emissive: true });
-        decor.push({ x: cx, y: SLAB_TOP + 3, z: cz, sx: 1.4, sy: 5, sz: 1.4, rot: 0, color: 0xd8d0c0 });
-        regCollider({ t: 0, x0: cx - 7, x1: cx + 7, z0: cz - 7, z1: cz + 7, y0: 0, y1: SLAB_TOP + 0.8 }, cx - 7, cx + 7, cz - 7, cz + 7);
+        const p = W(cx, cz), th = ang(cx, cz);
+        decor.push({ x: p.x, y: SLAB_TOP + 0.4, z: p.z, sx: 14, sy: 0.8, sz: 14, rot: th, color: 0xb9b2a5 });
+        decor.push({ x: p.x, y: SLAB_TOP + 0.85, z: p.z, sx: 12.5, sy: 0.15, sz: 12.5, rot: th, color: 0x3d8fb5, emissive: true });
+        decor.push({ x: p.x, y: SLAB_TOP + 3, z: p.z, sx: 1.4, sy: 5, sz: 1.4, rot: th, color: 0xd8d0c0 });
+        addBox(p.x, p.z, 7, 7, th, 0.8, 0xb9b2a5, 'fountain', null, SLAB_TOP - 0.05).hidden = true;
         for (let k = 0; k < 8; k++) {
           const a = (k / 8) * Math.PI * 2;
-          addTree(cx + Math.cos(a) * 30, cz + Math.sin(a) * 30, 'round', 1.1);
+          const q = W(cx + Math.cos(a) * 30, cz + Math.sin(a) * 30);
+          addTree(q.x, q.z, 'round', 1.1);
         }
       } else if (t === 'police') {
-        addBuilding(ix0 + 5, ix0 + 65, iz0 + 2, iz0 + 40, 14, 0x3b5578, 'police');
-        SPECIAL.police = { x: cx, z: r.z1 + 2, spawnX: ix0 + 35, spawnZ: iz0 + 60, h: Math.PI };
-        signs.push({ text: 'POLICE', x: ix0 + 35, y: SLAB_TOP + 10, z: iz0 + 40.3, rot: 0, w: 20, h: 4, bg: '#12305e', fg: '#ffffff' });
+        addBuildingL(ix0 + 35, iz0 + 21, 60, 38, 0, 14, 0x3b5578, 'police');
+        const front = W(cx, r.z1 + 2), spawn = W(ix0 + 35, iz0 + 60), sg = W(ix0 + 35, iz0 + 40.3);
+        SPECIAL.police = { x: front.x, z: front.z, spawnX: spawn.x, spawnZ: spawn.z, h: ang(cx, cz), lx: cx, lz: r.z1 + 2 };
+        signs.push({ text: 'POLICE', x: sg.x, y: SLAB_TOP + 10, z: sg.z, rot: ang(cx, cz), w: 20, h: 4, bg: '#12305e', fg: '#ffffff' });
       } else if (t === 'hospital') {
-        addBuilding(ix0 + 5, ix0 + 75, iz0 + 30, iz0 + 78, 30, 0xf2f2f2, 'hospital');
-        SPECIAL.hospital = { x: cx, z: iz0 + 15, spawnX: cx, spawnZ: iz0 + 15 };
-        signs.push({ text: '+ HOSPITAL', x: cx, y: SLAB_TOP + 22, z: iz0 + 29.7, rot: Math.PI, w: 26, h: 5, bg: '#ffffff', fg: '#d32f2f' });
+        addBuildingL(ix0 + 40, iz0 + 54, 70, 48, 0, 30, 0xf2f2f2, 'hospital');
+        const sp = W(cx, iz0 + 15), sg = W(cx, iz0 + 29.7), roof = W(ix0 + 40, iz0 + 54);
+        SPECIAL.hospital = { x: sp.x, z: sp.z, spawnX: sp.x, spawnZ: sp.z, roofX: roof.x, roofZ: roof.z };
+        signs.push({ text: '+ HOSPITAL', x: sg.x, y: SLAB_TOP + 22, z: sg.z, rot: Math.PI + ang(cx, cz), w: 26, h: 5, bg: '#ffffff', fg: '#d32f2f' });
       } else if (t === 'spray') {
-        addBuilding(ix0 + 40, ix0 + 80, iz0, iz0 + 80, 9, 0x44515e, 'mid');
-        SPECIAL.spray = { x0: ix0 + 4, x1: ix0 + 36, z0: iz0 + 25, z1: iz0 + 55, x: ix0 + 20, z: iz0 + 40 };
-        signs.push({ text: "PAY 'N' SPRAY", x: ix0 + 39.7, y: SLAB_TOP + 6.5, z: iz0 + 40, rot: -Math.PI / 2, w: 22, h: 3.5, bg: '#ffb300', fg: '#1a1a1a' });
+        addBuildingL(ix0 + 60, iz0 + 40, 40, 80, 0, 9, 0x44515e, 'mid');
+        const c = W(ix0 + 20, iz0 + 40), sg = W(ix0 + 39.7, iz0 + 40);
+        SPECIAL.spray = { lx0: ix0 + 4, lx1: ix0 + 36, lz0: iz0 + 25, lz1: iz0 + 55, x: c.x, z: c.z };
+        signs.push({ text: "PAY 'N' SPRAY", x: sg.x, y: SLAB_TOP + 6.5, z: sg.z, rot: -Math.PI / 2 + ang(cx, cz), w: 22, h: 3.5, bg: '#ffb300', fg: '#1a1a1a' });
       }
       // street lamps along every block edge, arms reaching over the road
+      const lamp = (lx, lz, dir) => { const p = W(lx, lz); lamps.push({ x: p.x, z: p.z, dir: dir + ang(lx, lz) }); };
       for (const f of [0.2, 0.5, 0.8]) {
-        lamps.push({ x: lerp(r.x0, r.x1, f), z: r.z0 + 0.7, dir: Math.PI });
-        lamps.push({ x: lerp(r.x0, r.x1, f), z: r.z1 - 0.7, dir: 0 });
-        lamps.push({ x: r.x0 + 0.7, z: lerp(r.z0, r.z1, f), dir: -Math.PI / 2 });
-        lamps.push({ x: r.x1 - 0.7, z: lerp(r.z0, r.z1, f), dir: Math.PI / 2 });
+        lamp(lerp(r.x0, r.x1, f), r.z0 + 0.7, Math.PI);
+        lamp(lerp(r.x0, r.x1, f), r.z1 - 0.7, 0);
+        lamp(r.x0 + 0.7, lerp(r.z0, r.z1, f), -Math.PI / 2);
+        lamp(r.x1 - 0.7, lerp(r.z0, r.z1, f), Math.PI / 2);
       }
       // a hydrant and a couple of benches per block
-      props.push({ file: 'kk_firehydrant', x: lerp(r.x0, r.x1, 0.35), z: r.z0 + 1.0, rot: 0, h: 0.9, col: 0.3 });
-      if (t === 'park' || t === 'plaza' || R() < 0.3) props.push({ file: 'kk_bench', x: lerp(r.x0, r.x1, 0.65), z: r.z1 - 1.2, rot: Math.PI, h: 0.9 });
-      if (R() < 0.5) props.push({ file: 'kk_trash_A', x: r.x1 - 1.1, z: lerp(r.z0, r.z1, 0.3), rot: 0, h: 0.9 });
+      const prop = (file, lx, lz, rot, h, col) => { const p = W(lx, lz); props.push({ file, x: p.x, z: p.z, rot: rot + ang(lx, lz), h, col }); };
+      prop('kk_firehydrant', lerp(r.x0, r.x1, 0.35), r.z0 + 1.0, 0, 0.9, 0.3);
+      if (t === 'park' || t === 'plaza' || R() < 0.3) prop('kk_bench', lerp(r.x0, r.x1, 0.65), r.z1 - 1.2, Math.PI, 0.9);
+      if (R() < 0.5) prop('kk_trash_A', r.x1 - 1.1, lerp(r.z0, r.z1, 0.3), 0, 0.9);
     }
-  // traffic lights on two corners of each intersection
+  // former streets become tree-lined walkways
   for (let i = 1; i < 16; i++)
-    for (let j = 1; j < 16; j++) {
-      const x = CL[i], z = CL[j];
-      for (const [sx, sz] of [[1, 1], [-1, -1]]) {
-        const px = x + sx * 8.2, pz = z + sz * 8.2;
-        if (!blockAt(px, pz)) continue;
-        props.push({ file: 'kk_trafficlight_A', x: px, z: pz, rot: Math.atan2(-sx, -sz), h: 5.2, col: 0.25 });
-      }
+    for (let j = 0; j < 16; j++) {
+      if (removedV[i][j]) for (let k = 1; k < 5; k++) { const p = cityPt(CL[i], CL[j] + k * 20); if (blockAt(p.x, p.z)) addTree(p.x, p.z, 'round', 1.0); }
+      if (removedH[i][j]) for (let k = 1; k < 5; k++) { const p = cityPt(CL[j] + k * 20, CL[i]); if (blockAt(p.x, p.z)) addTree(p.x, p.z, 'round', 1.0); }
     }
+  // traffic lights on two corners of real intersections
+  for (const jn of junctions) {
+    if (jn.deg < 3 || jn.i === 0 || jn.j === 0 || jn.i === 16 || jn.j === 16) continue;
+    const lx = CL[jn.i], lz = CL[jn.j];
+    for (const [sx, sz] of [[1, 1], [-1, -1]]) {
+      const p = cityPt(lx + sx * 8.2, lz + sz * 8.2);
+      if (!blockAt(p.x, p.z)) continue;
+      props.push({ file: 'kk_trafficlight_A', x: p.x, z: p.z, rot: Math.atan2(-sx, -sz) + cityAngle(lx, lz), h: 5.2, col: 0.25 });
+    }
+  }
   for (const l of lamps) regCollider({ t: 1, x: l.x, z: l.z, r: 0.25, y0: 0, y1: SLAB_TOP + 7 }, l.x - 1, l.x + 1, l.z - 1, l.z + 1);
   for (const p of props) {
     p.y = SLAB_TOP;
@@ -559,10 +898,11 @@ function genCity() {
   // avenue trees along a few streets
   for (const xi of [2, 6, 10, 14]) {
     const x = CL[xi];
-    for (let z = -790; z < 790; z += 18) {
-      if (blockAt(x - 9.5, z)) addTree(x - 9.5, z, 'round', 0.9);
-      if (blockAt(x + 9.5, z)) addTree(x + 9.5, z, 'round', 0.9);
-    }
+    for (let z = -790; z < 790; z += 18)
+      for (const ox of [-9.5, 9.5]) {
+        const p = cityPt(x + ox, z);
+        if (blockAt(p.x, p.z)) addTree(p.x, p.z, 'round', 0.9);
+      }
   }
 }
 
@@ -622,7 +962,7 @@ function genOutside() {
   // desert ramps
   const rp = [[1750, 1450, 0.6], [2300, 1750, 2.0], [1550, 2250, -0.5], [2550, 1950, 1.2], [1950, 2600, 0.2], [-200, -1100, 3.0]];
   for (const [x, z, rot] of rp) ramps.push({ x, z, rot, w: 7, len: 18, h: 5 });
-  ramps.push({ x: CL[10] + 50, z: CL[2] + 25, rot: 0, w: 7, len: 16, h: 3.5 }); // park ramp in city
+  { const p = cityPt(CL[10] + 50, CL[2] + 25); ramps.push({ x: p.x, z: p.z, rot: cityAngle(CL[10] + 50, CL[2] + 25), w: 7, len: 16, h: 3.5 }); } // park ramp in city
   for (const r of ramps) r.base = terrainHeight(r.x, r.z) + (blockAt(r.x, r.z) ? 0.15 : 0);
   if (ramps.length) ramps[0].base = Math.max(ramps[0].base, 3);
 
@@ -697,14 +1037,15 @@ export function groundHeight(x, z, maxY = Infinity) {
   const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
   if (l)
     for (const o of l)
-      if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= maxY + 1.0 && o.y1 > h) h = o.y1;
+      if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= maxY + 1.0 && o.y1 > h && inBox(o, x, z)) h = o.y1;
   const rh = rampHeight(x, z);
   if (rh !== null && rh <= lim && rh > h) h = rh;
   return h;
 }
 
 export function isWater(x, z) {
-  return terrainHeight(x, z) < WATER - 0.5 && roadAt(x, z, WATER + 0.5) === null && !blockAt(x, z);
+  const w = waterLevel(x, z);
+  return terrainHeight(x, z) < w - 0.5 && roadAt(x, z, w + 0.5) === null && !blockAt(x, z);
 }
 
 export const CR = { x: 0, z: 0, hit: false, nx: 0, nz: 0 };
@@ -716,23 +1057,32 @@ export function collideCircle(x, z, r, y, hh = 1.8) {
     for (const o of l) {
       if (o.t === 0) {
         if (y > o.y1 - 0.5 || y + hh < o.y0) continue;
-        const cx = clamp(x, o.x0, o.x1), cz = clamp(z, o.z0, o.z1);
-        let dx = x - cx, dz = z - cz;
+        // work in the box's own frame
+        const wx = x - o.cx, wz = z - o.cz;
+        let lx = wx * o.c - wz * o.s, lz = wx * o.s + wz * o.c;
+        if (Math.abs(lx) > o.hx + r || Math.abs(lz) > o.hz + r) continue;
+        const qx = clamp(lx, -o.hx, o.hx), qz = clamp(lz, -o.hz, o.hz);
+        let dx = lx - qx, dz = lz - qz;
         const d2 = dx * dx + dz * dz;
         if (d2 >= r * r) continue;
         if (d2 < 1e-6) {
-          const a = x - o.x0, b = o.x1 - x, c = z - o.z0, d = o.z1 - z;
+          const a = lx + o.hx, b = o.hx - lx, c = lz + o.hz, d = o.hz - lz;
           const m = Math.min(a, b, c, d);
-          if (m === a) { x = o.x0 - r; dx = -1; dz = 0; }
-          else if (m === b) { x = o.x1 + r; dx = 1; dz = 0; }
-          else if (m === c) { z = o.z0 - r; dx = 0; dz = -1; }
-          else { z = o.z1 + r; dx = 0; dz = 1; }
+          if (m === a) { lx = -o.hx - r; dx = -1; dz = 0; }
+          else if (m === b) { lx = o.hx + r; dx = 1; dz = 0; }
+          else if (m === c) { lz = -o.hz - r; dx = 0; dz = -1; }
+          else { lz = o.hz + r; dx = 0; dz = 1; }
         } else {
           const d = Math.sqrt(d2);
           dx /= d; dz /= d;
-          x = cx + dx * r; z = cz + dz * r;
+          lx = qx + dx * r; lz = qz + dz * r;
         }
-        hit = true; nx = dx; nz = dz;
+        // back to world
+        x = o.cx + lx * o.c + lz * o.s;
+        z = o.cz - lx * o.s + lz * o.c;
+        nx = dx * o.c + dz * o.s;
+        nz = -dx * o.s + dz * o.c;
+        hit = true;
       } else {
         if (y > o.y1 || y + hh < o.y0) continue;
         let dx = x - o.x, dz = z - o.z;
@@ -755,7 +1105,7 @@ export function raycastWorld(ox, oy, oz, dx, dy, dz, maxD, step = 1.2) {
     const x = ox + dx * t, y = oy + dy * t, z = oz + dz * t;
     if (y < terrainHeight(x, z) - 0.1) return t;
     const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
-    if (l) for (const o of l) if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && y < o.y1 && y > o.y0) return t;
+    if (l) for (const o of l) if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && y < o.y1 && y > o.y0 && inBox(o, x, z)) return t;
   }
   return Infinity;
 }
@@ -770,7 +1120,7 @@ export function zoneName(x, z) {
   if (Math.abs(x) < 820 && Math.abs(z) < 820) {
     const g = gangAt(x, z);
     if (g) return g.id === 'kingz' ? 'Kingz Turf' : 'Viper Blocks';
-    if (Math.abs(x + 350) < 60) return 'Riverside';
+    if (riverDist(x, z) < 70) return 'Riverside';
     if (Math.max(Math.abs(x), Math.abs(z)) < 300) return 'Downtown';
     if (Math.abs(z) > Math.abs(x)) return z < 0 ? 'Northside' : 'Southport';
     return x > 0 ? 'Eastgate' : 'Westwood';
@@ -789,18 +1139,19 @@ export function zoneName(x, z) {
 // Sidewalk corner nodes for pedestrians: corner (bi,bj,cx,cz) of a block.
 export function cornerPos(bi, bj, cx, cz, out) {
   const r = blockRect(bi, bj);
-  out.x = cx ? r.x1 - 1.6 : r.x0 + 1.6;
-  out.z = cz ? r.z1 - 1.6 : r.z0 + 1.6;
-  return out;
+  return cityPt(cx ? r.x1 - 1.6 : r.x0 + 1.6, cz ? r.z1 - 1.6 : r.z0 + 1.6, out);
 }
 export function walkableBlock(bi, bj) {
-  return bi >= 0 && bj >= 0 && bi < 16 && bj < 16 && blockType[bi][bj] !== 'river';
+  return bi >= 0 && bj >= 0 && bi < 16 && bj < 16 && blockType[bi][bj] !== 'river' && blockType[bi][bj] !== 'void';
 }
 
 let built = false;
 export function generateWorldData() {
   if (built) return;
   built = true;
+  genRiver();
+  assignBlockTypes();
+  pickRemovedStreets();
   buildRoads();
   regSegs();
   genTerrain();
