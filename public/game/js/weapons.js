@@ -67,6 +67,12 @@ export function hitscan(ox, oy, oz, dx, dy, dz, range, shooter, shooterVeh, minT
     const t = rayVehicle(ox, oy, oz, dx, dy, dz, v);
     if (t > minT && t < best) { best = t; veh = v; ped = null; }
   }
+  // other players' vehicles (multiplayer)
+  for (const v of G.ghosts || []) {
+    if (Math.abs(v.pos.x - ox) > range + 15 || Math.abs(v.pos.z - oz) > range + 15) continue;
+    const t = rayVehicle(ox, oy, oz, dx, dy, dz, v);
+    if (t > minT && t < best) { best = t; veh = v; ped = null; }
+  }
   const tw = raycastWorld(ox + dx * minT, oy + dy * minT, oz + dz * minT, dx, dy, dz, best - minT, 0.8);
   if (tw !== Infinity) { best = tw + minT; ped = null; veh = null; }
   HIT.t = best; HIT.ped = ped; HIT.veh = veh; HIT.head = head;
@@ -131,6 +137,7 @@ export function playerShoot(player, aimOrigin, aimDir) {
   G.shake = Math.max(G.shake, W.projectile ? 0.25 : 0.06);
   if (W.projectile) {
     fireRocket(mz, aimDir, player, player.vehicle);
+    emit('playerShot', mz, { x: mz.x + aimDir.x * 4, y: mz.y + aimDir.y * 4, z: mz.z + aimDir.z * 4 }, player.weapon);
     return true;
   }
   const pellets = W.pellets || 1;
@@ -142,6 +149,7 @@ export function playerShoot(player, aimOrigin, aimDir) {
     const h = hitscan(aimOrigin.x, aimOrigin.y, aimOrigin.z, _d.x, _d.y, _d.z, W.range + minT, player, player.vehicle, minT);
     const ex = aimOrigin.x + _d.x * h.t, ey = aimOrigin.y + _d.y * h.t, ez = aimOrigin.z + _d.z * h.t;
     if (k < 3) tracer(mz.x, mz.y, mz.z, ex, ey, ez);
+    if (k === 0) emit('playerShot', mz, { x: ex, y: ey, z: ez }, player.weapon);
     applyHit(h, W.dmg, player, _d.x, _d.z, aimOrigin.x, aimOrigin.y, aimOrigin.z);
   }
   return true;

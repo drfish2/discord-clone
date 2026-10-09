@@ -16,6 +16,7 @@ import { updateCamera, cycleZoom, snapCamera } from './camera.js';
 import { initMissions, updateMissions, abortMission } from './missions.js';
 import { loadModels } from './assets.js';
 import { loadSounds } from './audio.js';
+import { initNet, updateNet } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const START = { x: -8.9, z: 40 }; // logical city coordinates (see terrain.cityPt)
@@ -70,6 +71,7 @@ async function boot() {
   G.camYaw = G.player.heading;
   setupFixedVehicles();
   initMissions();
+  initNet();
   resetStats();
   onResize();
   // warm up a frame so shaders compile behind the menu
@@ -278,6 +280,7 @@ function frame(now) {
     updateCamera(dt);
     updateWorld(dt * 0.2, G.player.pos);
   }
+  updateNet(dt); // keeps sending while paused or on the results screen
   renderer.render(scene, camera);
   G.pressed = {};
   G.mouse.leftPressed = false;
@@ -334,6 +337,6 @@ on('vehicleDestroyed', (v) => {
 void clamp; void groundHeight; void wanted;
 
 // test/debug hook: step the simulation without rendering
-window.__game = { G, step(n, dt = 1 / 30) { for (let i = 0; i < n; i++) { update(dt); G.pressed = {}; G.mouse.leftPressed = false; } } };
+window.__game = { G, step(n, dt = 1 / 30) { for (let i = 0; i < n; i++) { update(dt); updateNet(dt); G.pressed = {}; G.mouse.leftPressed = false; } } };
 
 boot();

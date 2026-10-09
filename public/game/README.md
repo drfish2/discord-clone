@@ -33,6 +33,15 @@ A procedurally generated island on a 6 × 6 km map (fixed seed, so it's the same
 - Five missions (yellow markers): a street race, a car theft, a gang turf war, a desert truck run and a flying course through rings over the mountains.
 - Stunt bonuses for air time, a day/night cycle with lit windows and street lamps, a radar minimap and a full map (M).
 
+## Multiplayer
+
+Everyone who has the game open at the same time shares the island. You see the other players (with name tags and radar dots) and the vehicles they drive, and you can shoot, blow up or run each other over; the kill feed shows who wasted whom.
+
+- When the game is published as a claude.ai artifact, players are connected through the artifact's live room, and names come from their Claude accounts.
+- Anywhere else, the game connects tabs of the same browser (handy for testing), and each player gets a random callsign.
+
+Each player's own traffic, pedestrians, police and missions are simulated locally and are not shared; only the players themselves (position, vehicle, health and gunfire) are. Damage is decided by the shooter and applied by the victim's game.
+
 ## Controls
 
 | Key | Action |
@@ -71,4 +80,5 @@ A procedurally generated island on a 6 × 6 km map (fixed seed, so it's the same
 | `js/weapons.js` | Hitscan, rockets, explosions, NPC gunfire |
 | `js/missions.js` | Missions, pickups, Pay 'n' Spray, stunt bonuses |
 | `js/audio.js` | Sample playback, engine/skid/ambience loops, in-car radio, synthesized fallbacks |
+| `js/net.js` | Multiplayer: shares player state, draws other players, relays hits |
 | `js/hud.js`, `js/camera.js`, `js/fx.js` | HUD/radar/map, chase camera, particles |
