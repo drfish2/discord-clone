@@ -24,6 +24,45 @@ export const FILES = [
   'kk_streetlight', 'kk_trafficlight_A', 'kk_bench', 'kk_firehydrant', 'kk_dumpster', 'kk_trash_A',
 ];
 
+// Sandboxed hosts (like the artifact page) may block fetch() of data: and blob:
+// URLs. Decode embedded buffers and images directly instead of fetching them.
+function dataBytes(uri) {
+  const s = atob(uri.slice(uri.indexOf(',') + 1));
+  const u = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  return u;
+}
+function inlineData(parser) {
+  const loadBuffer = parser.loadBuffer.bind(parser);
+  parser.loadBuffer = (i) => {
+    const uri = parser.json.buffers[i].uri;
+    return uri && uri.startsWith('data:') ? Promise.resolve(dataBytes(uri).buffer) : loadBuffer(i);
+  };
+  const loadImageSource = parser.loadImageSource.bind(parser);
+  parser.loadImageSource = (i, l) => {
+    if (typeof createImageBitmap === 'undefined') return loadImageSource(i, l);
+    if (parser.sourceCache[i] !== undefined) return parser.sourceCache[i].then((t) => t.clone());
+    const def = parser.json.images[i];
+    let bytes, mime = def.mimeType;
+    if (def.uri && def.uri.startsWith('data:')) {
+      bytes = Promise.resolve(dataBytes(def.uri));
+      mime = mime || def.uri.slice(5, def.uri.search(/[;,]/));
+    } else if (def.bufferView !== undefined) bytes = parser.getDependency('bufferView', def.bufferView);
+    else return loadImageSource(i, l);
+    const p = bytes
+      .then((b) => createImageBitmap(new Blob([b], { type: mime }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
+      .then((bmp) => {
+        const t = new THREE.Texture(bmp);
+        t.needsUpdate = true;
+        t.userData.mimeType = mime;
+        return t;
+      });
+    parser.sourceCache[i] = p;
+    return p;
+  };
+  return { name: 'cc_inline_data' };
+}
+
 const raw = new Map(); // name -> gltf
 export function hasModel(n) {
   return raw.has(n);
@@ -32,6 +71,7 @@ export function hasModel(n) {
 export async function loadModels(onProgress) {
   const loader = new GLTFLoader();
   loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.register(inlineData);
   let done = 0;
   await Promise.all(
     FILES.map((n) =>
