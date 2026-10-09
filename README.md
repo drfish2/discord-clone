@@ -7,6 +7,8 @@ This is a repository for Fullstack Discord Clone: Next.js 13, React, Socket.io, 
 
 [VIDEO TUTORIAL](https://www.youtube.com/watch?v=ZbX4Ok9YX94)
 
+> **Also in this repo:** *Crimson Coast*, an open-world GTA-style browser game. Run `npm run dev` and open `/game/index.html`. See [public/game/README.md](public/game/README.md).
+
 Features:
 
 - Real-time messaging using Socket.io

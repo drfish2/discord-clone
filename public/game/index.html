@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crimson Coast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Chakra+Petch:wght@500;600;700&display=swap">
+<style>
+  /* Layout: full-bleed WebGL canvas with HUD pinned to the corners, GTA-style. Single dark look. */
+  :root {
+    --ink: #0b0d10;
+    --panel: rgba(10, 12, 16, 0.72);
+    --text: #f3f1ea;
+    --muted: #a7a9ad;
+    --crimson: #e2343f;
+    --gold: #f2c14e;
+    --money: #6fd17a;
+    --hp: #e2343f;
+    --armor: #5aa9f0;
+    --display: 'Anton', Impact, 'Arial Narrow', sans-serif;
+    --ui: 'Chakra Petch', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); color: var(--text); font-family: var(--ui); }
+  [hidden] { display: none !important; }
+  #game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .outline { text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,.6); }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+  #topright { position: absolute; top: 18px; right: 22px; display: grid; justify-items: end; gap: 6px; }
+  #clock { font: 700 26px var(--ui); letter-spacing: .04em; }
+  #weapon { display: grid; justify-items: end; gap: 0; }
+  #wname { font: 600 13px var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  #wammo { font: 700 18px var(--ui); font-variant-numeric: tabular-nums; }
+  #money { font: 400 34px var(--display); color: var(--money); letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+  .bar { width: 190px; height: 9px; background: rgba(0,0,0,.6); border: 2px solid #000; }
+  .bar > i { display: block; height: 100%; transition: width .2s; }
+  #hp { background: var(--hp); }
+  #armor { background: var(--armor); }
+  #stars { display: flex; gap: 2px; font-size: 30px; line-height: 1; }
+  .star { color: rgba(255,255,255,.18); -webkit-text-stroke: 1.5px rgba(0,0,0,.8); }
+  .star.on { color: #fff; }
+  .star.on.dim { color: rgba(255,255,255,.35); }
+
+  #radarwrap { position: absolute; left: 22px; bottom: 22px; width: 210px; height: 210px; border-radius: 50%; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  #radar { width: 210px; height: 210px; display: block; }
+  #speedowrap { position: absolute; right: 22px; bottom: 22px; width: 170px; height: 170px; background: radial-gradient(circle, rgba(10,12,16,.85) 55%, rgba(10,12,16,.55) 72%, transparent 73%); border-radius: 50%; }
+  #speedo { width: 170px; height: 170px; }
+  #zone { position: absolute; right: 26px; bottom: 206px; font: 400 34px var(--display); color: var(--gold); opacity: 0; transform: translateY(8px); transition: opacity .5s, transform .5s; text-align: right; letter-spacing: .02em; }
+  #zone.show { opacity: 1; transform: none; }
+  #vehname { position: absolute; right: 26px; bottom: 248px; font: 600 20px var(--ui); color: #b8e1ff; opacity: 0; transition: opacity .4s; letter-spacing: .08em; text-transform: uppercase; }
+  #vehname.show { opacity: 1; }
+  #help { position: absolute; left: 22px; top: 18px; max-width: 380px; padding: 12px 14px; background: var(--panel); border-left: 3px solid var(--gold); font: 500 15px/1.45 var(--ui); }
+  #help b { color: var(--gold); font-weight: 700; }
+  #notify { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); display: grid; gap: 6px; justify-items: center; }
+  .note { padding: 7px 14px; background: var(--panel); font: 600 15px var(--ui); }
+  #objective { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 9px 18px; background: var(--panel); font: 500 17px var(--ui); white-space: nowrap; max-width: calc(100vw - 500px); overflow: hidden; text-overflow: ellipsis; }
+  #objective b { color: var(--gold); }
+  #objective .hl { color: #4fc3f7; font-weight: 700; }
+  #objective .timer { font-variant-numeric: tabular-nums; color: #fff; font-weight: 700; }
+  #bigmsg { position: absolute; left: 0; right: 0; top: 26%; text-align: center; }
+  #bigmsg .big { font: 400 clamp(40px, 7vw, 86px) var(--display); letter-spacing: .02em; }
+  #bigmsg .sub { font: 600 18px var(--ui); margin-top: 4px; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #fff; box-shadow: 0 0 2px #000; }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { top: 10px; left: 0; height: 2px; width: 22px; }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(200,0,0,.65)); opacity: 0; }
+  #fps { position: absolute; left: 240px; bottom: 24px; font: 600 11px var(--ui); color: rgba(255,255,255,.45); }
+
+  /* ---------- screens ---------- */
+  .screen { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+  #loading { background: var(--ink); }
+  .loadbox { width: min(420px, 100%); display: grid; gap: 14px; }
+  .loadbox .t { font: 400 52px var(--display); color: var(--crimson); letter-spacing: .02em; }
+  .loadtrack { height: 4px; background: #23262b; }
+  #loadbar { height: 100%; width: 3%; background: var(--crimson); transition: width .3s; }
+  #loadtext { color: var(--muted); font-size: 14px; }
+
+  #menu { background: linear-gradient(90deg, rgba(8,9,12,.92) 0%, rgba(8,9,12,.72) 45%, rgba(8,9,12,.1) 100%); place-items: center start; padding-inline: max(16px, 7vw); }
+  .menubox { max-width: 560px; display: grid; gap: 22px; }
+  .logo { font: 400 clamp(56px, 10vw, 118px)/.86 var(--display); color: var(--text); letter-spacing: .01em; }
+  .logo span { color: var(--crimson); display: block; }
+  .tag { font: 500 17px/1.5 var(--ui); color: var(--muted); max-width: 46ch; }
+  .btnrow { display: flex; gap: 12px; flex-wrap: wrap; }
+  button { font: 700 16px var(--ui); letter-spacing: .1em; text-transform: uppercase; border: 0; padding: 14px 26px; cursor: pointer; color: #fff; background: var(--crimson); }
+  button.ghost { background: transparent; border: 2px solid rgba(255,255,255,.35); }
+  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+  button:hover { filter: brightness(1.12); }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 22px; font-size: 14px; color: #d5d5d2; }
+  .keys div { display: flex; gap: 10px; align-items: baseline; }
+  kbd { font: 700 12px var(--ui); background: #24272d; border-bottom: 2px solid #000; padding: 2px 7px; color: var(--gold); min-width: 26px; text-align: center; white-space: nowrap; }
+  .touchnote { font-size: 13px; color: var(--gold); }
+
+  #pause { background: rgba(6,7,10,.78); }
+  #pause .menubox { max-width: 720px; }
+  #pause h2 { margin: 0; font: 400 64px var(--display); }
+
+  #mapview { background: #10161b; display: block; padding: 0; }
+  #bigmap { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #mapview .maphdr { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #mapview h2 { margin: 0; font: 400 40px var(--display); text-shadow: 0 2px 6px #000; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; background: var(--panel); padding: 8px 12px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border: 1px solid #000; }
+
+  #deathscreen { background: linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.55)); place-items: center start; padding-inline: max(16px, 9vw); }
+  #death-title { font: 400 clamp(64px, 12vw, 140px)/.9 var(--display); letter-spacing: .02em; }
+  #death-title.busted { color: #ef5a4c; }
+  #death-title.wasted { color: #e8e2d0; }
+  #death-sub { font: 600 20px var(--ui); color: var(--text); }
+  .deathbox { display: grid; gap: 14px; width: min(460px, 100%); }
+  #death-stats { background: var(--panel); padding: 12px 16px; display: grid; gap: 6px; }
+  #death-stats .row { display: flex; justify-content: space-between; gap: 16px; font-size: 15px; color: var(--muted); }
+  #death-stats .row b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 760px) {
+    #radarwrap, #radar { width: 150px; height: 150px; }
+    #speedowrap, #speedo { width: 130px; height: 130px; }
+    #zone { bottom: 150px; font-size: 24px; }
+    #objective { max-width: calc(100vw - 32px); bottom: 180px; white-space: normal; }
+    #help { max-width: calc(100vw - 230px); font-size: 13px; }
+    .bar { width: 130px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="game"></div>
+
+<div id="hud" hidden>
+  <div id="vignette"></div>
+  <div id="topright" class="outline">
+    <div id="clock">10:00</div>
+    <div id="weapon"><div id="wname">Pistol</div><div id="wammo">12 / 48</div></div>
+    <div id="money">$00000000</div>
+    <div class="bar"><i id="hp" style="width:100%"></i></div>
+    <div class="bar" id="armorbar"><i id="armor" style="width:0%"></i></div>
+    <div id="stars"><span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span></div>
+  </div>
+  <div id="radarwrap"><canvas id="radar" width="210" height="210"></canvas></div>
+  <div id="speedowrap" hidden><canvas id="speedo" width="170" height="170"></canvas></div>
+  <div id="zone" class="outline"></div>
+  <div id="vehname" class="outline"></div>
+  <div id="help" hidden></div>
+  <div id="notify"></div>
+  <div id="objective" hidden></div>
+  <div id="bigmsg" class="outline" hidden></div>
+  <div id="crosshair" hidden></div>
+  <div id="fps"></div>
+</div>
+
+<div id="loading" class="screen">
+  <div class="loadbox">
+    <div class="t">CRIMSON COAST</div>
+    <div class="loadtrack"><div id="loadbar"></div></div>
+    <div id="loadtext">Loading engine…</div>
+  </div>
+</div>
+
+<div id="menu" class="screen" hidden>
+  <div class="menubox">
+    <div class="logo">CRIMSON<span>COAST</span></div>
+    <div class="tag">36 square kilometres of city, desert, forest and mountains. Steal anything with an engine, outrun the police, and stay off Purple Kingz turf.</div>
+    <div class="btnrow"><button id="btn-play" type="button">Play</button></div>
+    <div class="keys">
+      <div><kbd>WASD</kbd> Move / drive</div>
+      <div><kbd>Mouse</kbd> Look around</div>
+      <div><kbd>F</kbd> Enter / exit vehicle</div>
+      <div><kbd>LMB</kbd> Shoot / punch</div>
+      <div><kbd>RMB</kbd> Aim</div>
+      <div><kbd>1–6</kbd> <kbd>Wheel</kbd> Weapons</div>
+      <div><kbd>Shift</kbd> Sprint</div>
+      <div><kbd>Space</kbd> Jump / handbrake</div>
+      <div><kbd>R</kbd> Reload</div>
+      <div><kbd>M</kbd> Map</div>
+      <div><kbd>V</kbd> Camera distance</div>
+      <div><kbd>Esc</kbd> Pause</div>
+    </div>
+    <div class="touchnote" id="touchnote" hidden>Crimson Coast needs a keyboard and mouse.</div>
+  </div>
+</div>
+
+<div id="pause" class="screen" hidden>
+  <div class="menubox">
+    <h2>PAUSED</h2>
+    <div class="keys">
+      <div><kbd>WASD</kbd> Move / drive</div>
+      <div><kbd>F</kbd> Enter / exit vehicle</div>
+      <div><kbd>Space</kbd> Jump / handbrake</div>
+      <div><kbd>H</kbd> Horn</div>
+      <div><kbd>LMB</kbd> Shoot (drive-by in cars)</div>
+      <div><kbd>RMB</kbd> Aim</div>
+      <div><kbd>Space</kbd>/<kbd>Shift</kbd> Helicopter up / down</div>
+      <div><kbd>Q</kbd>/<kbd>E</kbd> Heli strafe · plane rudder</div>
+      <div><kbd>W</kbd>/<kbd>S</kbd> Plane throttle</div>
+      <div><kbd>↑</kbd>/<kbd>↓</kbd> Plane pitch</div>
+      <div><kbd>T</kbd> Skip an hour</div>
+      <div><kbd>N</kbd> Sound on / off</div>
+    </div>
+    <div class="tag">Yellow squares on the radar start missions. Lose the cops by breaking line of sight, or pay $100 at the Pay 'n' Spray (orange square). Big air earns stunt bonuses.</div>
+    <div class="btnrow"><button id="btn-resume" type="button">Resume</button><button id="btn-free" class="ghost" type="button">Mouse look: captured</button></div>
+  </div>
+</div>
+
+<div id="mapview" class="screen" hidden>
+  <canvas id="bigmap"></canvas>
+  <div class="maphdr">
+    <h2>MAP</h2>
+    <div class="legend">
+      <span><i style="background:#ffd23f"></i>Mission</span>
+      <span><i style="background:#ef5350"></i>Hospital / health</span>
+      <span><i style="background:#42a5f5"></i>Police / armor</span>
+      <span><i style="background:#ffb300"></i>Pay 'n' Spray</span>
+      <span><i style="background:#9ccc65"></i>Weapon</span>
+    </div>
+    <button id="btn-map-close" type="button">Close (M)</button>
+  </div>
+</div>
+
+<div id="deathscreen" class="screen" hidden>
+  <div class="deathbox">
+    <div id="death-title" class="busted outline">BUSTED</div>
+    <div id="death-sub">Pursuit over</div>
+    <div id="death-stats"></div>
+    <div class="btnrow"><button id="btn-continue" type="button">Continue</button></div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script>
+  if (matchMedia('(pointer: coarse)').matches) document.getElementById('touchnote').hidden = false;
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
