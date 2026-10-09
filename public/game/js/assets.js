@@ -8,6 +8,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const BASE = 'assets/models/';
+// GLB by default; a host that can't serve .glb can set window.CC_MODEL_EXT (e.g. '.gltf.json')
+const EXT = (typeof window !== 'undefined' && window.CC_MODEL_EXT) || '.glb';
 export const FILES = [
   // vehicles (Kenney via pmndrs market, CC0; helicopter & bicycle Blendswap CC0; plane Babylon.js CC-BY 4.0)
   'sedan', 'sports-sedan', 'suv', 'suv-luxury', 'hatchback', 'taxi', 'police-car', 'van', 'truck', 'delivery-truck',
@@ -34,7 +36,7 @@ export async function loadModels(onProgress) {
   await Promise.all(
     FILES.map((n) =>
       loader
-        .loadAsync(BASE + n + '.glb')
+        .loadAsync(BASE + n + EXT)
         .then((g) => raw.set(n, g))
         .catch((e) => console.warn('model missing, using fallback:', n, e && e.message))
         .finally(() => onProgress && onProgress(++done / FILES.length))
