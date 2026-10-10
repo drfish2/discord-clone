@@ -20,6 +20,17 @@ falls back to its built-in procedural models and synthesized sound.
 | mh_player, mh_ped_*, mh_cop, mh_gang (realistic people) | Built with [MakeHuman](http://www.makehumancommunity.org) / MPFB2 | MakeHuman 1.1 assets | CC0 1.0 |
 | mh_anims (82 animation clips, retargeted) | Quaternius, Universal Animation Library 1 & 2 | [quaternius.com](https://quaternius.com) | CC0 1.0 |
 | aerobatic_plane | Babylon.js team | [BabylonJS/Assets](https://github.com/BabylonJS/Assets) | CC BY 4.0 |
+| rossini-9x ("Rossini 9X", realistic sports car) | Karol Miklas, "Porsche 911 Carrera 4S" ([Sketchfab](https://sketchfab.com/karolmiklas)) | via [pmndrs/examples](https://github.com/pmndrs/examples) (building-live-envmaps) | CC BY-SA 4.0 (this modified version is also CC BY-SA 4.0) |
+| vector-gt ("Vector GT", realistic sports car) | Eric Chadwick, Darmstadt Graphics Group GmbH (from a CC0 model by Unity Fan) | [KhronosGroup/glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) "CarConcept" | CC BY 4.0 |
+| volt3 ("Volt 3", sports car, police, taxi) | Cyberbotics Ltd., Webots TeslaModel3 geometry protos (commit 67d291f) | [cyberbotics/webots](https://github.com/cyberbotics/webots) | CC BY 4.0 |
+| courier-van ("Courier Van") | Cyberbotics Ltd., Webots MercedesBenzSprinter protos (wheels added) | [cyberbotics/webots](https://github.com/cyberbotics/webots) | Apache 2.0 |
+| gz-hatchback, gz-hatchback-red, gz-prius, gz-suv, gz-pickup, gz-ambulance, gz-firetruck, gz-bus (realistic traffic) | Open Source Robotics Foundation | [osrf/gazebo_models](https://github.com/osrf/gazebo_models) | CC BY 3.0 |
+
+The realistic cars are modified: manufacturer badges, logos and lettering were removed,
+meshes simplified, wheels split into separate nodes and textures resized (plain GLB, no
+compression extensions). In-game names are fictional and the cars are not endorsed by
+any manufacturer. Conversion scripts are in `tools/models/` in the repository; the
+Kenney cars remain as a fallback.
 
 ## Sound effects (`sfx/`)
 

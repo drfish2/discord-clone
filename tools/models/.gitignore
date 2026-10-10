@@ -1,0 +1,3 @@
+# intermediate conversion output (decoded sources, raw stage-1 GLBs, texture dumps, previews)
+build/
+node_modules/

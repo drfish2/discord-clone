@@ -7,6 +7,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { setAnimationClips, hasAnimations, makeAnimatedRig } from './anim.js';
+import { cgFractionForVehicleType } from './car_physics.js';
 
 const BASE = 'assets/models/';
 // realistic bodies, by role (files that are missing are skipped)
@@ -36,6 +37,29 @@ export const FILES = [
   'kk_bld_A', 'kk_bld_B', 'kk_bld_C', 'kk_bld_D', 'kk_bld_E', 'kk_bld_F', 'kk_bld_G', 'kk_bld_H',
   'kk_streetlight', 'kk_trafficlight_A', 'kk_bench', 'kk_firehydrant', 'kk_dumpster', 'kk_trash_A',
 ];
+
+// Realistic cars (see assets/CREDITS.md; built by tools/models). Real-world
+// metres, wheel_fl/fr/rl/rr nodes, body paint material named 'paint'. The
+// Kenney models above stay loaded as the fallback when one of these is missing.
+// heavy: ~40k triangles, skipped with ?q=low (those types fall back to a lighter model)
+export const REAL_CARS = {
+  'rossini-9x': { name: 'Rossini 9X', heavy: true },
+  'vector-gt': { name: 'Vector GT', heavy: true },
+  volt3: { name: 'Volt 3' },
+  'courier-van': { name: 'Courier Van' },
+  'gz-hatchback': { name: 'Brio Hatch' },
+  'gz-hatchback-red': { name: 'Brio Hatch' },
+  'gz-prius': { name: 'Ecora Hybrid' },
+  'gz-suv': { name: 'Bastion SUV' },
+  'gz-pickup': { name: 'Ranchero Pickup' },
+  'gz-ambulance': { name: 'Ambulance' },
+  'gz-firetruck': { name: 'Fire Engine' },
+  'gz-bus': { name: 'City Bus' },
+};
+const LOW_Q = typeof location !== 'undefined' && /[?&]q=low/.test(location.search);
+function REAL_CAR_FILES() {
+  return Object.keys(REAL_CARS).filter((f) => !(LOW_Q && REAL_CARS[f].heavy));
+}
 
 // Sandboxed hosts (like the artifact page) may block fetch() of data: and blob:
 // URLs. Decode embedded buffers and images directly instead of fetching them.
@@ -86,13 +110,14 @@ export async function loadModels(onProgress) {
   loader.setMeshoptDecoder(MeshoptDecoder);
   loader.register(inlineData);
   let done = 0;
+  const files = FILES.concat(REAL_CAR_FILES());
   await Promise.all(
-    FILES.map((n) =>
+    files.map((n) =>
       loader
         .loadAsync(BASE + n + EXT)
         .then((g) => { raw.set(n, g); if (n === 'mh_anims') setAnimationClips(g); })
         .catch((e) => console.warn('model missing, using fallback:', n, e && e.message))
-        .finally(() => onProgress && onProgress(++done / FILES.length))
+        .finally(() => onProgress && onProgress(++done / files.length))
     )
   );
   return raw.size;
@@ -163,21 +188,28 @@ function recenter(mesh) {
 }
 
 // ---------------------------------------------------------------- vehicles
-// type -> model description. rotY turns the model so it faces +z.
+// type -> model description.
+//   file: Kenney low-poly model, the fallback (rotY turns it so it faces +z)
+//   real: realistic models (REAL_CARS); each vehicle picks one by its variant.
+//         Types without one (box truck, garbage truck, tractor, race car, bikes,
+//         aircraft, boat) keep their Kenney/other model.
+// Police and taxi have no realistic upstream variant: they use the Volt 3,
+// repainted at runtime (Vehicle forces their colours) plus the police light bar.
 export const VEHICLE_MODELS = {
-  sedan: { file: 'sedan' },
-  sports: { file: 'sports-sedan' },
-  suv: { file: 'suv' },
-  luxury: { file: 'suv-luxury' },
-  hatchback: { file: 'hatchback' },
-  taxi: { file: 'taxi' },
-  police: { file: 'police-car' },
-  van: { file: 'van' },
-  pickup: { file: 'truck' },
+  sedan: { file: 'sedan', real: ['gz-prius'] },
+  sports: { file: 'sports-sedan', real: ['rossini-9x', 'vector-gt', 'volt3'] },
+  suv: { file: 'suv', real: ['gz-suv'] },
+  luxury: { file: 'suv-luxury', real: ['gz-suv'] },
+  hatchback: { file: 'hatchback', real: ['gz-hatchback', 'gz-hatchback-red'] },
+  taxi: { file: 'taxi', real: ['volt3'] },
+  police: { file: 'police-car', real: ['volt3'] },
+  van: { file: 'van', real: ['courier-van'] },
+  pickup: { file: 'truck', real: ['gz-pickup'] },
   truck: { file: 'delivery-truck' },
-  firetruck: { file: 'firetruck' },
+  firetruck: { file: 'firetruck', real: ['gz-firetruck'] },
   garbage: { file: 'garbage-truck' },
-  ambulance: { file: 'ambulance' },
+  ambulance: { file: 'ambulance', real: ['gz-ambulance'] },
+  bus: { real: ['gz-bus'] },
   racecar: { file: 'race-car' },
   tractor: { file: 'tractor' },
   bike: { file: 'motorcycle' },
@@ -188,14 +220,88 @@ export const VEHICLE_MODELS = {
   boat: { file: 'boat-large', rotY: Math.PI },
 };
 
-const vehTemplates = new Map();
-// Returns {root, size, wheels:[{pivot,front}], paint:[materials], rotor, tail, prop} template or null.
-function vehicleTemplate(type, spec) {
-  if (vehTemplates.has(type)) return vehTemplates.get(type);
+// Which file a vehicle of `type` uses: a loaded realistic model (by variant), else the Kenney one.
+function pickVehicleFile(type, variant = 0) {
   const d = VEHICLE_MODELS[type];
-  const g = d && raw.get(d.file);
+  if (!d) return null;
+  const real = (d.real || []).filter((f) => raw.has(f));
+  if (real.length) return { file: real[Math.abs(variant | 0) % real.length], real: true };
+  return d.file && raw.has(d.file) ? { file: d.file, real: false } : null;
+}
+
+const vehTemplates = new Map();
+const WHEEL_NODE = /^wheel_([fr])([lr])(\d*)$/;
+
+// Realistic model: kept at its real size. The origin goes on the ground under
+// the physics centre of gravity (cgFraction of the wheelbase behind the front
+// axle) so the raycast wheels sit where the modelled wheels are; the measured
+// wheelbase/track/radius are handed to the physics through spec.geom.
+function realTemplate(type, spec, file) {
+  const key = type + '|' + file;
+  if (vehTemplates.has(key)) return vehTemplates.get(key);
+  const scene = raw.get(file).scene.clone(true);
+  scene.updateMatrixWorld(true);
+  const wheels = [];
+  scene.traverse((o) => {
+    const m = WHEEL_NODE.exec(o.name);
+    if (m) wheels.push({ o, front: m[1] === 'f' });
+  });
+  if (wheels.length < 4 || !wheels.some((w) => w.front)) {
+    console.warn('realistic car without wheel nodes, using fallback:', file);
+    vehTemplates.set(key, null);
+    return null;
+  }
+  let wheelR = 0;
+  const fr = { f: [], r: [] };
+  for (const w of wheels) {
+    const o = w.o;
+    const b = boundsOf(o); // world == model space here
+    wheelR += (b.max.y - b.min.y) / 2 / wheels.length;
+    const pivot = new THREE.Group();
+    pivot.position.copy(o.position);
+    pivot.userData.part = w.front ? 'wheelF' : 'wheelB';
+    o.parent.add(pivot);
+    const spin = new THREE.Group();
+    spin.userData.part = 'spin';
+    pivot.add(spin);
+    o.position.set(0, 0, 0);
+    spin.add(o);
+    fr[w.front ? 'f' : 'r'].push(pivot.position);
+  }
+  const avg = (list, f) => list.reduce((a, p) => a + f(p), 0) / list.length;
+  const zf = avg(fr.f, (p) => p.z), zr = avg(fr.r, (p) => p.z);
+  const trackF = 2 * avg(fr.f, (p) => Math.abs(p.x)), trackR = 2 * avg(fr.r, (p) => Math.abs(p.x));
+  const wheelbase = zf - zr;
+  const cgToFront = wheelbase * cgFractionForVehicleType(type, spec);
+  const inner = new THREE.Group();
+  inner.add(scene);
+  const b = boundsOf(inner);
+  scene.position.set(-(b.min.x + b.max.x) / 2, -b.min.y, -(zf - cgToFront));
+  const root = new THREE.Group();
+  root.add(inner);
+  root.updateMatrixWorld(true);
+  const size = boundsOf(root).getSize(new THREE.Vector3());
+  // mirrors and ladders shouldn't widen the collision footprint much past the wheels
+  const wid = Math.min(size.x, Math.max(trackF, trackR) + 0.7);
+  const t = {
+    root, size, real: true, file,
+    name: (REAL_CARS[file] && REAL_CARS[file].name) || null,
+    dims: { len: size.z, wid, height: size.y },
+    geom: { wheelbase, cgToFront, trackF, trackR, wheelR },
+  };
+  vehTemplates.set(key, t);
+  return t;
+}
+
+// Kenney / other low-poly model: scaled to the spec's length (or wingspan).
+// Returns {root, size} with wheels/rotors tagged for buildVehicleModel, or null.
+function vehicleTemplate(type, spec, file) {
+  const key = type + '|' + file;
+  if (vehTemplates.has(key)) return vehTemplates.get(key);
+  const d = VEHICLE_MODELS[type];
+  const g = raw.get(file);
   if (!g) {
-    vehTemplates.set(type, null);
+    vehTemplates.set(key, null);
     return null;
   }
   const scene = SkeletonUtils.clone(g.scene);
@@ -252,7 +358,7 @@ function vehicleTemplate(type, spec) {
     const wc = root.worldToLocal(pivot.getWorldPosition(new THREE.Vector3()));
     pivot.userData.part = wc.z > 0 ? 'wheelF' : 'wheelB';
   }
-  vehTemplates.set(type, t);
+  vehTemplates.set(key, t);
   return t;
 }
 
@@ -269,11 +375,22 @@ function paintFor(mat, hex) {
 }
 
 // Build an instance of a vehicle model. Returns null when the model is unavailable.
-export function buildVehicleModel(type, spec, color) {
-  const t = vehicleTemplate(type, spec);
+//   variant: picks among the type's realistic models (deterministic, e.g. from the colour)
+//   keepLivery: the Kenney model has a painted-on livery (police, taxi, ...): don't recolour it
+// Realistic models also return dims {len, wid, height} and geom (wheel layout) for the physics.
+export function buildVehicleModel(type, spec, color, { variant = 0, keepLivery = false } = {}) {
+  const pick = pickVehicleFile(type, variant);
+  if (!pick) return null;
+  let t = pick.real ? realTemplate(type, spec, pick.file) : null;
+  if (!t) {
+    const d = VEHICLE_MODELS[type];
+    t = d.file ? vehicleTemplate(type, spec, d.file) : null;
+  }
   if (!t) return null;
+  if (!t.real && keepLivery) color = null;
   const root = SkeletonUtils.clone(t.root);
   const out = { root, wheels: [], size: t.size, model: true, meshes: [] };
+  if (t.real) Object.assign(out, { real: true, file: t.file, dims: t.dims, geom: t.geom, displayName: t.name });
   root.traverse((o) => {
     const part = o.userData.part;
     if (part === 'wheelF' || part === 'wheelB') out.wheels.push({ pivot: o, spin: o.children[0], front: part === 'wheelF' });

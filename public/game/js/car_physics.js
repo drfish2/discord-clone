@@ -156,14 +156,29 @@ export function makeParams(preset = 'sedan', overrides = {}) {
 }
 
 // Map the game's VSPEC entries (models.js) onto presets.
-export function paramsForVehicleType(type, spec, extra = {}) {
+export function presetForVehicleType(type, spec) {
   const map = { luxury: 'suv', firetruck: 'truck', garbage: 'truck', ambulance: 'van', tractor: 'pickup', bicycle: 'bike' };
-  const preset = PRESETS[type] ? type : map[type] || (spec && spec.kind === 'bike' ? 'bike' : 'sedan');
+  return PRESETS[type] ? type : map[type] || (spec && spec.kind === 'bike' ? 'bike' : 'sedan');
+}
+// Fraction of the wheelbase between the CoG and the front axle for a type's preset
+// (assets.js puts a realistic model's origin there so its wheels line up with the sim).
+export function cgFractionForVehicleType(type, spec) {
+  const p = Object.assign({}, BASE, PRESETS[presetForVehicleType(type, spec)] || {});
+  return p.cgToFront / p.wheelbase;
+}
+export function paramsForVehicleType(type, spec, extra = {}) {
+  const preset = presetForVehicleType(type, spec);
   const o = {};
   if (spec) {
     o.length = spec.len; o.width = spec.wid; o.height = spec.height;
     if (spec.wheelR) o.wheelRadius = spec.wheelR;
     if (spec.speed) o.vmax = spec.speed * 1.1; // keep the game's per-class top speeds as a governor
+    // realistic models measure their own wheel layout (assets.js vehicleTemplate)
+    const g = spec.geom;
+    if (g) {
+      o.wheelbase = g.wheelbase; o.cgToFront = g.cgToFront;
+      o.trackF = g.trackF; o.trackR = g.trackR; o.wheelRadius = g.wheelR;
+    }
   }
   if (type === 'bicycle') Object.assign(o, { mass: 95, torqueCurve: [[300, 25], [1500, 30], [3000, 20]], redline: 3000, idleRPM: 0, stallRPM: 300, cdA: 0.5, brakeTorque: 250 });
   return makeParams(preset, Object.assign(o, extra));
