@@ -38,3 +38,4 @@ next-env.d.ts
 test
 test.pub
 .claude/
+*.bundle
