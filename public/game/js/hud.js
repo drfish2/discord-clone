@@ -2,6 +2,7 @@
 import { G, clamp, lerp, on } from './core.js';
 import { H, TN, HALF, segs, buildings, AIRPORTS, GANGS, SPECIAL, zoneName, biomeAt, urbanAt, BIOMES, DISTRICTS, REGIONS, junctions } from './terrain.js';
 import { WEAPONS } from './weapons.js';
+import { nodeNear, route, distToPath } from './gps.js';
 
 const $ = (id) => document.getElementById(id);
 let mapCanvas, radar, rctx, speedo, sctx, bigMap, bctx;
@@ -158,6 +159,46 @@ export function setObjective(t) {
 
 // ---------------------------------------------------------------- per frame
 let moneyShown = -1;
+// ---------------------------------------------------------------- GPS
+// wp: the player's waypoint (set on the full map). Without one, active mission objectives
+// (blips flagged gps) are routed instead.
+export const GPS = { wp: null, path: null, target: null, tx: 0, tz: 0, checkT: 0, dist: 0 };
+const WP_COLOR = '#c77dff';
+export function setWaypoint(x, z) {
+  GPS.wp = x === null ? null : { x, z };
+  GPS.path = null;
+  GPS.checkT = 0;
+}
+function gpsTarget() {
+  if (GPS.wp) return GPS.wp;
+  for (const b of blips) if (b.gps && !b.hidden) return b;
+  return null;
+}
+function updateGps(dt, pp) {
+  const t = gpsTarget();
+  if (!t) { GPS.path = null; GPS.target = null; return; }
+  if (GPS.wp && Math.hypot(pp.x - GPS.wp.x, pp.z - GPS.wp.z) < 30) {
+    setWaypoint(null);
+    notify('You have reached your destination');
+    return;
+  }
+  GPS.checkT -= dt;
+  const moved = t !== GPS.target || Math.hypot(t.x - GPS.tx, t.z - GPS.tz) > 20;
+  if (moved || (GPS.checkT <= 0 && (!GPS.path || distToPath(GPS.path, pp.x, pp.z).d > 35))) {
+    GPS.target = t; GPS.tx = t.x; GPS.tz = t.z;
+    GPS.checkT = 1;
+    GPS.path = route(nodeNear(pp.x, pp.z), nodeNear(t.x, t.z));
+  } else if (GPS.checkT <= 0) GPS.checkT = 1;
+  if (GPS.path) {
+    // drop the part of the route already driven
+    const { i } = distToPath(GPS.path, pp.x, pp.z);
+    if (i > 0) GPS.path = GPS.path.slice(i);
+    let d = 0;
+    for (let k = 0; k < GPS.path.length - 1; k++) d += Math.hypot(GPS.path[k + 1].x - GPS.path[k].x, GPS.path[k + 1].z - GPS.path[k].z);
+    GPS.dist = d + Math.hypot(t.x - GPS.path[GPS.path.length - 1].x, t.z - GPS.path[GPS.path.length - 1].z);
+  }
+}
+
 export function updateHud(dt) {
   const P = G.player;
   for (let i = notes.length - 1; i >= 0; i--) {
@@ -169,6 +210,7 @@ export function updateHud(dt) {
   if (vehNameT > 0) { vehNameT -= dt; if (vehNameT <= 0) $('vehname').classList.remove('show'); }
   if (radioT > 0) { radioT -= dt; if (radioT <= 0) $('radio').classList.remove('show'); }
   const pp = P.vehicle ? P.vehicle.pos : P.pos;
+  updateGps(dt, pp);
   // zone
   const z = zoneName(pp.x, pp.z);
   if (z !== lastZone) {
@@ -252,6 +294,29 @@ function drawRadar() {
     g.fill();
     g.stroke();
   };
+  // GPS route
+  if (GPS.path && GPS.path.length) {
+    g.save();
+    g.beginPath();
+    g.arc(R, R, R - 3, 0, Math.PI * 2);
+    g.clip();
+    g.strokeStyle = GPS.wp ? WP_COLOR : '#ffd23f';
+    g.lineWidth = 5;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.globalAlpha = 0.9;
+    g.beginPath();
+    g.moveTo(R, R);
+    for (const n of GPS.path) {
+      const [bx, by] = rot(n.x, n.z);
+      g.lineTo(R + bx, R + by);
+      if (bx * bx + by * by > R * R * 4) break;
+    }
+    if (GPS.target) { const [bx, by] = rot(GPS.target.x, GPS.target.z); g.lineTo(R + bx, R + by); }
+    g.stroke();
+    g.restore();
+  }
+  if (GPS.wp) drawBlip(GPS.wp.x, GPS.wp.z, WP_COLOR, 5.5, 'sq', true);
   // gang zones
   for (const gg of GANGS) {
     if (gg.hostile > 0) drawBlip(gg.x, gg.z, gg.css, 6, 'sq', false);
@@ -286,6 +351,15 @@ function drawRadar() {
   g.stroke();
   g.restore();
   g.restore();
+  if (GPS.path && GPS.target) {
+    const km = GPS.dist >= 1000 ? (GPS.dist / 1000).toFixed(1) + ' km' : Math.round(GPS.dist / 10) * 10 + ' m';
+    g.font = 'bold 12px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.fillStyle = 'rgba(0,0,0,0.6)';
+    g.fillRect(R - 34, R * 2 - 34, 68, 18);
+    g.fillStyle = GPS.wp ? WP_COLOR : '#ffd23f';
+    g.fillText(km, R, R * 2 - 21);
+  }
   // ring & north
   g.strokeStyle = 'rgba(0,0,0,0.7)';
   g.lineWidth = 4;
@@ -393,7 +467,21 @@ function initMapControls() {
     drawBigMap();
   }, { passive: false });
   bigMap.addEventListener('mousedown', (e) => { MV.drag = { x: e.clientX, y: e.clientY, cx: MV.cx, cz: MV.cz }; });
-  addEventListener('mouseup', () => { MV.drag = null; });
+  addEventListener('mouseup', (e) => {
+    const d = MV.drag;
+    MV.drag = null;
+    if (!d || bigMap.parentElement.hidden || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+    // a click (not a drag): place the waypoint there, or clear it when clicking on it
+    const r = bigMap.getBoundingClientRect();
+    const sc = mapScale();
+    const px = (e.clientX - r.left) * devicePixelRatio, py = (e.clientY - r.top) * devicePixelRatio;
+    const wx = MV.cx + ((px - bigMap.width / 2) / sc) * HALF * 2, wz = MV.cz + ((py - bigMap.height / 2) / sc) * HALF * 2;
+    if (GPS.wp && (Math.hypot(wx - GPS.wp.x, wz - GPS.wp.z) * sc) / (HALF * 2) < 14 * devicePixelRatio) setWaypoint(null);
+    else setWaypoint(wx, wz);
+    const P = G.player, pp = P.vehicle ? P.vehicle.pos : P.pos;
+    updateGps(0, pp);
+    drawBigMap();
+  });
   addEventListener('mousemove', (e) => {
     if (!MV.drag || bigMap.parentElement.hidden) return;
     const k = (HALF * 2 * devicePixelRatio) / mapScale();
@@ -442,7 +530,32 @@ export function drawBigMap(reset = false) {
     g.fill();
     g.stroke();
   };
+  if (GPS.path && GPS.path.length) {
+    g.strokeStyle = GPS.wp ? WP_COLOR : '#ffd23f';
+    g.lineWidth = 4 * devicePixelRatio;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.beginPath();
+    const [a0, b0] = tp(pp.x, pp.z);
+    g.moveTo(a0, b0);
+    for (const n of GPS.path) { const [a, b] = tp(n.x, n.z); g.lineTo(a, b); }
+    if (GPS.target) { const [a, b] = tp(GPS.target.x, GPS.target.z); g.lineTo(a, b); }
+    g.stroke();
+  }
   for (const b of blips) if (!b.hidden) dot(b.x, b.z, b.color, (b.size || 5) + 1);
+  if (GPS.wp) {
+    const [a, b] = tp(GPS.wp.x, GPS.wp.z);
+    g.fillStyle = WP_COLOR;
+    g.strokeStyle = '#000';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(a, b);
+    g.lineTo(a - 8 * devicePixelRatio, b - 16 * devicePixelRatio);
+    g.lineTo(a + 8 * devicePixelRatio, b - 16 * devicePixelRatio);
+    g.closePath();
+    g.fill();
+    g.stroke();
+  }
   dot(SPECIAL.hospital.x, SPECIAL.hospital.z, '#ef5350');
   dot(SPECIAL.police.x, SPECIAL.police.z, '#42a5f5');
   dot(SPECIAL.spray.x, SPECIAL.spray.z, '#ffb300');

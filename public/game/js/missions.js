@@ -201,7 +201,7 @@ function defineMissions() {
       if (m.marker) G.scene.remove(m.marker);
       const c = m.cps[m.i];
       m.marker = makeMarker(c.x, c.z, 7, 12, 0xffd23f);
-      m.blip = { x: c.x, z: c.z, color: '#ffd23f', size: 6 };
+      m.blip = { x: c.x, z: c.z, color: '#ffd23f', size: 6, gps: true };
       blips.push(m.blip);
     },
     update(m, dt) {
@@ -234,7 +234,7 @@ function defineMissions() {
       m.car = new Vehicle('sports', t.x - t.s.dz * 3, t.z + t.s.dx * 3, t.heading, 0xd4af37);
       m.car.persist = true;
       m.stage = 0;
-      m.blip = { x: m.car.pos.x, z: m.car.pos.z, color: '#4fc3f7', size: 6 };
+      m.blip = { x: m.car.pos.x, z: m.car.pos.z, color: '#4fc3f7', size: 6, gps: true };
       blips.push(m.blip);
     },
     update(m) {
@@ -251,7 +251,7 @@ function defineMissions() {
           const s = SPECIAL.spray;
           m.dest = makeMarker(s.x, s.z, 6, 6, 0x4fc3f7);
           m.blip.hidden = true;
-          m.dblip = { x: s.x, z: s.z, color: '#4fc3f7', size: 6 };
+          m.dblip = { x: s.x, z: s.z, color: '#4fc3f7', size: 6, gps: true };
           blips.push(m.dblip);
         }
       } else {
@@ -366,7 +366,7 @@ function defineMissions() {
       const t = spot(240, 510, true);
       m.dest = makeMarker(t.x, t.z, 6, 6, 0x4fc3f7);
       m.dpos = { x: t.x, z: t.z };
-      m.blip = { x: m.dpos.x, z: m.dpos.z, color: '#4fc3f7', size: 6 };
+      m.blip = { x: m.dpos.x, z: m.dpos.z, color: '#4fc3f7', size: 6, gps: true };
       blips.push(m.blip);
       m.chasers = 0;
     },
