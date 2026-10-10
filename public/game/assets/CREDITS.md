@@ -21,6 +21,10 @@ falls back to its built-in procedural models and synthesized sound.
 | mh_anims (82 animation clips, retargeted) | Quaternius, Universal Animation Library 1 & 2 | [quaternius.com](https://quaternius.com) | CC0 1.0 |
 | aerobatic_plane | Babylon.js team | [BabylonJS/Assets](https://github.com/BabylonJS/Assets) | CC BY 4.0 |
 
+Buildings are procedural (`js/world.js`): facades, windows, shopfronts and doors are drawn by a shader on a
+grid measured in metres, with a detail texture generated at load time, so they need no downloaded assets.
+The KayKit `kk_bld_A`-`H` models are no longer loaded (scaled up to fill a city lot they read as toys).
+
 ## Sound effects (`sfx/`)
 
 | Files | Source | License |

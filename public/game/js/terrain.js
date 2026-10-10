@@ -265,6 +265,7 @@ export function addBuilding(x0, x1, z0, z1, h, color, kind = 'tower', roof = nul
   return addBox((x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2, 0, h, color, kind, roof, y0);
 }
 function removeBuilding(b) {
+  if (b.kids) for (const k of b.kids) removeBuilding(k);
   const i = buildings.indexOf(b);
   if (i >= 0) buildings.splice(i, 1);
   unregCollider(b);
@@ -316,31 +317,112 @@ const ROOFS = [0x8b3a2b, 0x5a5a5a, 0x3e4d5c, 0x7a4b2a, 0x2f4f3a];
 const KK_KEYS = Object.keys(KK);
 
 // ---------------------------------------------------------------- buildings from the compiled lots
+// Facade types read by world.js buildingMaterial(): every window, door and storey is sized in
+// metres there, so a building only has to say what it is made of and what its ground floor is.
+export const FAC = { BRICK: 0, PLASTER: 1, OFFICE: 2, GLASS: 3, HOUSE: 4, HOSPITAL: 5, SHED: 6, CIVIC: 7, PLAIN: 8 };
+export const GF = { HOME: 0, SHOP: 1, LOBBY: 2, GARAGE: 3 };
+const BRICKS = [0xa4553c, 0x8e4a35, 0xb06a4c, 0x7d4434, 0xc49a6c, 0x9b5b45, 0xb5876a];
+// a separate stream so the shared world RNG (streets, nature, missions) sees the same draws as before
+const RB = mulberry32(19870311);
+const pick = (a) => a[Math.floor(RB() * a.length)];
+// street level in front of a lot (facade grids start here, not at the buried foundation)
+function frontGround(cx, cz, hz, rot) {
+  const fx = Math.sin(rot), fz = Math.cos(rot);
+  return terrainHeight(cx + fx * (hz + 1.5), cz + fz * (hz + 1.5));
+}
+function facade(b, type, gf, blank = 0) {
+  b.fac = type;
+  b.gf = gf;
+  b.blank = blank; // bit 1: left side is a party wall, bit 2: right side
+  b.seed = RB();
+  b.gy = clamp(frontGround(b.cx, b.cz, b.hz, b.rot), b.y0 + 0.4, b.y1 - 2.5);
+  return b;
+}
+// a stair/lift housing on a flat roof: a real box, so it collides like it looks
+function roofHouse(b) {
+  const w = Math.min(b.hx, 3.2) * 0.8, d = Math.min(b.hz, 3) * 0.8;
+  if (b.hx < 4 || b.hz < 4) return;
+  const u = (RB() - 0.5) * (b.hx - w - 1.2) * 2, v = (RB() - 0.5) * (b.hz - d - 1.2) * 2;
+  const x = b.cx + u * b.c + v * b.s, z = b.cz - u * b.s + v * b.c;
+  const r = addBox(x, z, w, d, b.rot + (RB() < 0.5 ? 0 : Math.PI), 2.7, 0xb9b4aa, 'roof', null, b.y1);
+  (b.kids = b.kids || []).push(r);
+  facade(r, FAC.PLAIN, GF.HOME);
+  r.gy = b.y1;
+}
+// how far a lot's front must step back so no part of it stands on a carriageway or pavement
+function frontClearance(cx, cz, hx, hz, rot) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  // the back and sides cannot step back: a road there means the lot is unusable
+  for (const [u, v] of [[-1, 0], [1, 0], [0, -1], [-1, -1], [1, -1]]) {
+    const lx = u * (hx - 0.2), lz = v * (hz - 0.2);
+    const nr = nearestRoad(cx + lx * c + lz * s, cz - lx * s + lz * c);
+    if (nr && nr.d < 0) return -1;
+  }
+  for (let back = 0; back <= Math.min(4, hz - 3); back += 0.5) {
+    let ok = true;
+    for (const u of [-1, -0.5, 0, 0.5, 1]) {
+      for (const v of [1, 0.6]) {
+        const lx = u * (hx - 0.1), lz = v * hz - back;
+        const x = cx + lx * c + lz * s, z = cz - lx * s + lz * c;
+        const nr = nearestRoad(x, z);
+        if (nr && (nr.d < 0.2 || onPavement(x, z))) { ok = false; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) return back;
+  }
+  return -1; // a road runs through the lot: leave it empty
+}
+// storeys in metres: ground floor (shops are taller), upper floors, a parapet band on top
+function storeyHeight(target, gf, sh) {
+  const n = clamp(Math.round((target - gf - 0.6) / sh), 1, 40);
+  return gf + n * sh + 0.6;
+}
 function genBuildings() {
   for (const [cx, cz, hx, hz, rot, h, style] of W.buildings) {
     if (style === 0) {
-      addBox(cx, cz, hx, hz, rot, h, PALETTE.down[Math.floor(R() * PALETTE.down.length)], 'tower');
+      R();
+      const glass = RB() < 0.55;
+      const b = addBox(cx, cz, hx, hz, rot, storeyHeight(h, 5, glass ? 3.9 : 3.6), glass ? pick(PALETTE.down) : pick([0xcfc8bb, 0xb8b2a6, 0xd9d2c3, 0x9ea4a8, 0xc2b59b]), 'tower');
+      facade(b, glass ? FAC.GLASS : FAC.OFFICE, GF.LOBBY);
     } else if (style === 1) {
-      // a KayKit building whose proportions fit the lot, pushed to the street front
-      let best = null;
-      for (const k of KK_KEYS) {
-        const [kw, kd, kh] = KK[k];
-        const sc = Math.min((hx * 2) / kw, (hz * 2) / kd);
-        const fill = (kw * sc * kd * sc) / (4 * hx * hz);
-        const score = fill + (h > 16 ? kh / 3 : (3 - kh) / 3) * 0.25 + R() * 0.15;
-        if (!best || score > best.score) best = { k, sc, score };
+      for (let k = 0; k < KK_KEYS.length; k++) R();
+      // a row of narrower units across the lot instead of one blown-up building
+      const w = hx * 2;
+      const n = w > 30 ? 3 : w > 17 ? 2 : 1;
+      const cuts = [0];
+      for (let i = 1; i < n; i++) cuts.push((i + (RB() - 0.5) * 0.3) / n);
+      cuts.push(1);
+      const c = Math.cos(rot), s = Math.sin(rot);
+      for (let i = 0; i < n; i++) {
+        const u0 = -hx + cuts[i] * w, u1 = -hx + cuts[i + 1] * w;
+        const uw = (u1 - u0) / 2, um = (u0 + u1) / 2;
+        // some units sit a little back from the frontage, which breaks up the street wall
+        const clear = frontClearance(cx + um * c, cz - um * s, uw, hz, rot);
+        const back = Math.max(RB() < 0.25 ? Math.min(1.5, hz * 0.15) : 0, clear);
+        const ucx = cx + um * c - (back / 2) * s, ucz = cz - um * s - (back / 2) * c;
+        const shop = RB() < 0.78;
+        const brick = RB() < 0.48;
+        const type = brick ? FAC.BRICK : RB() < 0.85 ? FAC.PLASTER : FAC.OFFICE;
+        const gf = shop ? 4.4 : 3.5;
+        const ht = storeyHeight(clamp(h * (0.7 + RB() * 0.6), 7.5, 32), gf, type === FAC.OFFICE ? 3.6 : 3.2);
+        const col = brick ? pick(BRICKS) : type === FAC.OFFICE ? pick([0xc9c4b8, 0xb5b0a5, 0xd8d0c0]) : pick(PALETTE.mid);
+        if (clear < 0) continue;
+        const b = addBox(ucx, ucz, uw, hz - back / 2, rot, ht, col, 'block');
+        facade(b, type, shop ? GF.SHOP : GF.HOME, (i > 0 ? 1 : 0) | (i < n - 1 ? 2 : 0));
+        if (RB() < 0.45) roofHouse(b);
       }
-      const [kw, kd, kh] = KK[best.k];
-      const sc = best.sc;
-      const push = hz - (kd * sc) / 2;
-      const fx = Math.sin(rot), fz = Math.cos(rot);
-      const b = addBox(cx + fx * push, cz + fz * push, (kw * sc) / 2, (kd * sc) / 2, rot, kh * sc, 0x9a8f80, 'kk');
-      b.kk = best.k;
-      b.scale = sc;
     } else {
       const des = biomeAt(cx, cz) === BIOMES.DESERT;
       const pal = des ? PALETTE.desert : PALETTE.res;
-      addBox(cx, cz, hx, hz, rot, h, pal[Math.floor(R() * pal.length)], 'house', des ? null : ROOFS[Math.floor(R() * ROOFS.length)]);
+      R();
+      if (!des) R();
+      // detached houses: two storeys (sometimes one or three) of 2.9 m
+      const fl = h < 5.8 ? 1 : h > 8.4 ? 3 : 2;
+      const back = frontClearance(cx, cz, hx, hz, rot);
+      if (back < 0) continue;
+      const b = addBox(cx - Math.sin(rot) * back / 2, cz - Math.cos(rot) * back / 2, hx, hz - back / 2, rot, 0.4 + fl * 2.9, pick(pal), 'house', des ? null : pick(ROOFS));
+      facade(b, FAC.HOUSE, GF.HOME);
     }
   }
 }
@@ -809,6 +891,9 @@ export function generateWorldData() {
   genLandmarks();
   genStreets();
   genNature();
+  // landmarks and airport buildings get a facade from their kind
+  const KIND_FAC = { police: [FAC.CIVIC, GF.LOBBY], hospital: [FAC.HOSPITAL, GF.LOBBY], hangar: [FAC.SHED, GF.GARAGE], mid: [FAC.SHED, GF.GARAGE], tower: [FAC.OFFICE, GF.LOBBY] };
+  for (const b of buildings) if (b.fac === undefined) facade(b, ...(b.kind === 'mid' && b.hx > 20 ? [FAC.GLASS, GF.LOBBY] : KIND_FAC[b.kind] || [FAC.PLASTER, GF.HOME]));
   // a few stunt ramps around the island
   for (const [px, py, rot] of [[250, 520, 0.6], [270, 540, 2.0], [230, 505, -0.5], [360, 520, 1.2], [600, 300, 0.2]]) {
     const p = streetSpot(px * TS - HALF, py * TS - HALF, false);

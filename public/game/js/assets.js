@@ -32,8 +32,7 @@ export const FILES = [
   'male', 'survivor-male', 'survivor-female', 'skater-male', 'skater-female',
   // nature (Kenney / pmndrs market, CC0)
   'tree-big', 'tree-small', 'low-poly-tree', 'palm-long', 'palm-short', 'formation-rock',
-  // city (KayKit City Builder Bits, CC0)
-  'kk_bld_A', 'kk_bld_B', 'kk_bld_C', 'kk_bld_D', 'kk_bld_E', 'kk_bld_F', 'kk_bld_G', 'kk_bld_H',
+  // city (KayKit City Builder Bits, CC0); buildings are procedural, at human scale (world.js)
   'kk_streetlight', 'kk_trafficlight_A', 'kk_bench', 'kk_firehydrant', 'kk_dumpster', 'kk_trash_A',
 ];
 
