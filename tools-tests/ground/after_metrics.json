@@ -1,0 +1,17 @@
+{
+ "tag": "a2",
+ "q": "default",
+ "bootMs": 3081,
+ "meanFrameMs": 18.4711111111256,
+ "lastFrame": {
+  "calls": 116,
+  "tris": 433700,
+  "geos": 855,
+  "tex": 143
+ },
+ "errors": [
+  "warning: [.WebGL-0x58840042e000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0x58840042e000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0x58840042e000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+ ]
+}
