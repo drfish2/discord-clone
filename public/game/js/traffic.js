@@ -1,6 +1,6 @@
 // Road traffic AI, parked cars, fixed vehicle spawns, and road pathfinding.
 import { G, clamp, rand, pick, angWrap, emit, on, dist2 } from './core.js';
-import { nodes, segs, AIRPORT, SPECIAL, TOWNS, LAKE, CL, blockAt, isWater, cityPt, cityAngle, RIVER_PATH } from './terrain.js';
+import { nodes, segs, AIRPORT, AIRPORTS, SPECIAL, isWater, urbanAt, streetSpot, waterSpot, px2w, terrainHeight } from './terrain.js';
 import { Vehicle, spawnVehicle, CAR_COLORS } from './vehicles.js';
 import { sfx } from './audio.js';
 
@@ -119,7 +119,7 @@ export class RoadAI {
     if (d < (wp.turn ? 5 : 6)) { this.wps.shift(); return this.update(dt, v); }
     const want = Math.atan2(dx, dz);
     const diff = angWrap(want - v.heading);
-    const speedLimit = (wp.s && wp.s.kind === 'hwy' ? 24 : 13) * this.cruise * (this.panic > 0 ? 1.6 : 1);
+    const speedLimit = (wp.s ? (wp.s.kind === 'main' ? 20 : wp.s.kind === 'rural' ? 17 : 13) : 13) * this.cruise * (this.panic > 0 ? 1.6 : 1);
     const nextTurn = this.wps.slice(0, 3).some((w) => w.turn);
     let target = nextTurn ? Math.min(speedLimit, 8) : speedLimit;
     if (Math.abs(diff) > 0.6) target = Math.min(target, 6);
@@ -242,7 +242,7 @@ export function updateTraffic(dt) {
     nearSegs = segsNear(pp.x, pp.z, 350);
     nearAt = { x: pp.x, z: pp.z };
   }
-  const inCity = Math.abs(pp.x) < 900 && Math.abs(pp.z) < 900;
+  const inCity = urbanAt(pp.x, pp.z) > 0.15;
   let traffic = 0, parked = 0;
   for (let i = G.vehicles.length - 1; i >= 0; i--) {
     const v = G.vehicles[i];
@@ -292,7 +292,7 @@ function spawnFromList(list, type, city) {
 function spawnParked(pp) {
   for (let tries = 0; tries < 10; tries++) {
     const s = nearSegs[Math.floor(Math.random() * nearSegs.length)];
-    if (!s || s.kind !== 'city') continue;
+    if (!s || !s.sidewalk) continue;
     const t = rand(0.2, 0.8);
     const x = s.a.x + (s.b.x - s.a.x) * t, z = s.a.z + (s.b.z - s.a.z) * t;
     const d = Math.hypot(x - pp.x, z - pp.z);
@@ -311,49 +311,54 @@ function spawnParked(pp) {
 export const FIXED = [];
 export function setupFixedVehicles() {
   const add = (type, x, z, h, color, y) => FIXED.push({ type, x, z, h, color, y, v: null, t: 0 });
-  const A = AIRPORT;
-  // stunt planes wait side by side on the runway threshold, the jet on the apron
-  add('plane', A.runwayX0 + 25, A.runwayZ - 12, Math.PI / 2, 0xd32f2f);
-  add('plane', A.runwayX0 + 25, A.runwayZ + 12, Math.PI / 2, 0xfbc02d);
-  add('jet', 1550, 100, Math.PI, 0xeceff1);
-  add('heli', 1750, 110, Math.PI / 2, 0x263238);
-  add('heli', 1800, 110, Math.PI / 2, 0xe65100);
-  // hospital & police roof helis
-  const hb = SPECIAL.hospital;
-  add('heli', SPECIAL.hospital.roofX, SPECIAL.hospital.roofZ, 0, 0xfafafa, null);
-  // boats
-  // boats moored on the river (one in the city, one downstream)
-  for (const [f, col] of [[0.42, 0xffffff], [0.62, 0x1565c0], [0.85, 0x2e7d32]]) {
-    const i = Math.floor(f * (RIVER_PATH.length - 2));
-    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
-    add('boat', a.x, a.z, Math.atan2(b.x - a.x, b.z - a.z), col);
+  // parked at the kerb of a street near a map location; ahead = metres along the street
+  const kerb = (type, x, z, color, ahead = 0, side = 1) => {
+    const p = streetSpot(x, z, false);
+    if (!p.s) return;
+    const s = p.s;
+    const off = s.w / 2 - 1.4;
+    add(type, p.x + s.dx * ahead - s.dz * off * side, p.z + s.dz * ahead + s.dx * off * side, Math.atan2(s.dx, s.dz), color);
+  };
+  const st = SPECIAL.start;
+  // player-friendly rides right at the start
+  kerb('sports', st.x, st.z, 0xc62828, 1, 1);
+  kerb('bike', st.x, st.z, 0x111111, -7, 1);
+  kerb('bicycle', st.x, st.z, 0xe65100, -11, 1);
+  kerb('suv', st.x, st.z, 0xfafafa, 18, -1);
+  // airports: stunt planes on the runway threshold, the jet and helicopters on the apron
+  for (const ap of AIRPORTS) {
+    const t = ap.threshold, d = ap.dir;
+    const big = ap === AIRPORT;
+    add('plane', t.x - d.z * 12, t.z + d.x * 12, t.heading, big ? 0xd32f2f : 0x1565c0, ap.h + 0.1);
+    if (big) {
+      add('plane', t.x + d.z * 12, t.z - d.x * 12, t.heading, 0xfbc02d, ap.h + 0.1);
+      add('jet', ap.apron.x, ap.apron.z, t.heading + Math.PI, 0xeceff1, ap.h + 0.1);
+      add('racecar', ap.apron.x - d.x * 60, ap.apron.z - d.z * 60, t.heading, 0xc62828, ap.h + 0.1);
+    }
+    for (const [k, hp] of ap.helipads.entries()) if (big || k === 0) add('heli', hp.x, hp.z, t.heading, k ? 0xe65100 : 0x263238, ap.h + 0.1);
   }
-  add('boat', LAKE.x + 20, LAKE.z - 60, 0.4, 0xd32f2f);
-  add('boat', -700, 2760, 2.0, 0xfafafa);
-  // player-friendly cars around start
-  const addL = (type, lx, lz, lh, color) => { const p = cityPt(lx, lz); add(type, p.x, p.z, lh + cityAngle(lx, lz) + Math.PI / 2, color); };
-  addL('sports', -5.6, 40, -Math.PI / 2, 0xc62828);
-  addL('bike', -5.6, 27, -Math.PI / 2, 0x111111);
-  addL('suv', 94.3, 150, -Math.PI / 2, 0xfafafa);
-  addL('bicycle', -9.5, 30, -Math.PI / 2, 0xe65100);
-  add('racecar', 1250, 150, Math.PI / 2, 0xc62828);
-  add('tractor', TOWNS[2].x - 30, TOWNS[2].z + 25, 1, 0x2e7d32);
-  add('luxury', TOWNS[1].x + 20, TOWNS[1].z + 30, 0, 0x212121);
-  // countryside
-  add('pickup', TOWNS[0].x + 30, TOWNS[0].z - 30, 1, 0x8d6e63);
-  add('bike', TOWNS[0].x - 20, TOWNS[0].z + 40, 2, 0xe65100);
-  add('suv', TOWNS[3].x - 10, TOWNS[3].z + 25, 0, 0x37474f);
-  add('pickup', TOWNS[2].x + 20, TOWNS[2].z + 10, 0, 0x2e7d32);
-  add('bike', TOWNS[1].x + 15, TOWNS[1].z - 40, 0, 0x1565c0);
-  add('sports', TOWNS[1].x - 30, TOWNS[1].z - 50, 0, 0xffeb3b);
-  const pa = SPECIAL.police.h;
-  add('police', SPECIAL.police.spawnX - Math.cos(pa) * 12, SPECIAL.police.spawnZ + Math.sin(pa) * 12, pa);
-  add('police', SPECIAL.police.spawnX + Math.cos(pa) * 12, SPECIAL.police.spawnZ - Math.sin(pa) * 12, pa);
-  void hb; void A;
+  // hospital roof heli
+  add('heli', SPECIAL.hospital.roofX, SPECIAL.hospital.roofZ, 0, 0xfafafa, SPECIAL.hospital.roofY);
+  // boats moored off the city harbours
+  for (const [px, py, col] of [[175, 255, 0xffffff], [620, 470, 0x1565c0], [430, 330, 0xd32f2f], [270, 690, 0x2e7d32], [520, 735, 0xfafafa]]) {
+    const w = px2w(px, py);
+    const p = waterSpot(w.x, w.z, 3);
+    if (p) add('boat', p.x, p.z, Math.random() * 6.28, col);
+  }
+  // around the island
+  for (const [px, py, type, col] of [[245, 520, 'pickup', 0x8d6e63], [250, 525, 'bike', 0xe65100], [360, 520, 'suv', 0x37474f], [600, 300, 'pickup', 0x2e7d32],
+    [690, 520, 'luxury', 0x212121], [215, 625, 'sports', 0xffeb3b], [520, 100, 'tractor', 0x2e7d32], [160, 190, 'bike', 0x1565c0]]) {
+    const w = px2w(px, py);
+    kerb(type, w.x, w.z, col, 0, 1);
+  }
+  const P = SPECIAL.police;
+  const fx = Math.sin(P.h), fz = Math.cos(P.h);
+  add('police', P.spawnX - fz * 3.5 + fx * 8, P.spawnZ + fx * 3.5 + fz * 8, P.h);
+  add('police', P.spawnX - fz * 3.5 - fx * 8, P.spawnZ + fx * 3.5 - fz * 8, P.h);
   for (const f of FIXED) spawnFixed(f);
 }
 function spawnFixed(f) {
-  const v = new Vehicle(f.type, f.x, f.z, f.h, f.color ?? CAR_COLORS[0]);
+  const v = new Vehicle(f.type, f.x, f.z, f.h, f.color ?? CAR_COLORS[0], f.y ?? null);
   v.persist = true;
   v.fixed = f;
   f.v = v;
@@ -381,4 +386,4 @@ export function updateFixed(dt) {
 on('gunfire', (x, z) => {
   for (const v of G.vehicles) if (v.ai instanceof RoadAI && Math.hypot(v.pos.x - x, v.pos.z - z) < 50) v.ai.panic = 8;
 });
-void isWater; void blockAt; void emit;
+void isWater; void emit; void terrainHeight;

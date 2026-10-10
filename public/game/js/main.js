@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, resetStats, on, clamp } from './core.js';
 import { buildWorld, updateWorld } from './world.js';
-import { SPECIAL, groundHeight, cityPt, cityAngle } from './terrain.js';
+import { SPECIAL, groundHeight, loadWorldData } from './terrain.js';
 import { initFx, updateFx, setFxScale } from './fx.js';
 import { Player } from './player.js';
 import { updatePeds, vehiclePedCollisions } from './characters.js';
@@ -19,7 +19,6 @@ import { loadSounds } from './audio.js';
 import { initNet, updateNet } from './net.js';
 
 const $ = (id) => document.getElementById(id);
-const START = { x: -8.9, z: 40 }; // logical city coordinates (see terrain.cityPt)
 let renderer, scene, camera;
 const focus = new THREE.Vector3();
 
@@ -53,9 +52,11 @@ async function boot() {
 
   setLoading('Loading cars, people and buildings…', 5);
   const sounds = loadSounds();
+  const world = loadWorldData().catch((e) => { setLoading('Could not load the map: ' + e.message); throw e; });
   await loadModels((f) => setLoading('Loading cars, people and buildings…', 5 + f * 30));
   await sounds;
-  setLoading('Raising mountains, carving rivers…', 40);
+  setLoading('Raising mountains, laying roads…', 40);
+  await world;
   await nextFrame();
   buildWorld(scene);
   setLoading('Painting the map…', 60);
@@ -65,9 +66,9 @@ async function boot() {
   buildMapImage();
   setLoading('Waking up the city…', 80);
   await nextFrame();
-  const sp = cityPt(START.x, START.z);
-  G.player = new Player(sp.x, sp.z);
-  G.player.heading = cityAngle(START.x, START.z);
+  const st = startSpot();
+  G.player = new Player(st.x, st.z);
+  G.player.heading = st.heading;
   G.camYaw = G.player.heading;
   setupFixedVehicles();
   initMissions();
@@ -83,6 +84,14 @@ async function boot() {
   $('menu').hidden = false;
   G.state = 'menu';
   requestAnimationFrame(frame);
+}
+
+// on the pavement next to the start street, facing along it
+function startSpot() {
+  const s = SPECIAL.start;
+  const nx = -s.tz, nz = s.tx;
+  const off = s.w / 2 + 1.8;
+  return { x: s.x + nx * off, z: s.z + nz * off, heading: Math.atan2(s.tx, s.tz) };
 }
 
 // ---------------------------------------------------------------- input
@@ -235,10 +244,9 @@ function showResults() {
 function respawn() {
   const P = G.player;
   const busted = deathKind === 'busted';
-  const sp = busted ? { x: SPECIAL.police.x - 8, z: SPECIAL.police.z + 1 } : { x: SPECIAL.hospital.spawnX, z: SPECIAL.hospital.spawnZ };
-  if (busted) sp.z = SPECIAL.police.z - 9;
+  const sp = busted ? { x: SPECIAL.police.x, z: SPECIAL.police.z } : { x: SPECIAL.hospital.spawnX, z: SPECIAL.hospital.spawnZ };
   P.reset(sp.x, sp.z);
-  P.heading = busted ? 0 : Math.PI;
+  P.heading = busted ? SPECIAL.police.h : 0;
   G.camYaw = P.heading;
   const fee = Math.min(P.money, busted ? 250 : 150);
   P.money -= fee;
@@ -319,7 +327,7 @@ function update(dt) {
   updateHud(dt);
   updateAudio(dt);
   // fell out of the world
-  if (P.pos.y < -60 && !P.vehicle) { const sp = cityPt(START.x, START.z); P.reset(sp.x, sp.z); }
+  if (P.pos.y < -60 && !P.vehicle) { const sp = startSpot(); P.reset(sp.x, sp.z); }
 }
 
 on('enterVehicle', (v) => {

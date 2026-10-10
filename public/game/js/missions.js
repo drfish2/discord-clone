@@ -1,8 +1,9 @@
 // Missions, pickups, Pay 'n' Spray and stunt bonuses.
 import * as THREE from 'three';
 import { G, emit, on, rand } from './core.js';
-import { groundHeight, SPECIAL, TOWNS, GANGS, CL, AIRPORT, LAKE, cityPt, inSpray } from './terrain.js';
-const cp = (x, z) => cityPt(x, z);
+import { groundHeight, terrainHeight, SPECIAL, GANGS, AIRPORT, inSpray, streetSpot, px2w } from './terrain.js';
+// a spot on the pavement (or the road with onRoad) nearest to a point of the reference map (pixels)
+const spot = (px, py, onRoad = false) => { const w = px2w(px, py); return streetSpot(w.x, w.z, !onRoad); };
 import { Vehicle } from './vehicles.js';
 import { Ped } from './characters.js';
 import { notify, bigMessage, help, setObjective, blips } from './hud.js';
@@ -59,22 +60,22 @@ export function dropCash(x, z, amount) {
 
 function setupPickups() {
   const S = SPECIAL;
-  const at = (kind, lx, lz, data) => { const p = cp(lx, lz); return addPickup(kind, p.x, p.z, data); };
-  at('weapon', 40, 30, { w: 'pistol', ammo: 36 });
-  at('weapon', CL[2] + 10, CL[3] + 9.5, { w: 'smg', ammo: 120 }); // Kingz turf alley
-  at('weapon', CL[13] + 50, CL[12] + 9.5, { w: 'shotgun', ammo: 24 }); // Vipers
-  addPickup('weapon', S.police.spawnX, S.police.spawnZ + 10, { w: 'shotgun', ammo: 18 });
-  addPickup('weapon', TOWNS[3].x - 20, TOWNS[3].z, { w: 'rifle', ammo: 150 });
-  addPickup('weapon', 2140, 290, { w: 'rpg', ammo: 8 }); // airport hangars
-  addPickup('weapon', TOWNS[0].x + 5, TOWNS[0].z + 5, { w: 'smg', ammo: 90 });
-  addPickup('weapon', TOWNS[2].x, TOWNS[2].z - 15, { w: 'rifle', ammo: 90 });
-  addPickup('health', S.hospital.spawnX + 6, S.hospital.spawnZ, {});
-  addPickup('health', TOWNS[0].x - 10, TOWNS[0].z, {});
-  addPickup('health', TOWNS[1].x, TOWNS[1].z, {});
-  addPickup('health', LAKE.x + 210, LAKE.z, {});
-  addPickup('armor', S.police.spawnX + 6, S.police.spawnZ + 10, {});
-  addPickup('armor', TOWNS[2].x + 10, TOWNS[2].z, {});
-  at('armor', CL[8] + 50, CL[7] + 30, {});
+  const at = (kind, px, py, data) => { const p = spot(px, py); return addPickup(kind, p.x, p.z, data); };
+  at('weapon', 245, 305, { w: 'pistol', ammo: 36 });
+  at('weapon', 140, 230, { w: 'smg', ammo: 120 }); // Kingz turf
+  at('weapon', 680, 600, { w: 'shotgun', ammo: 24 }); // Vipers
+  addPickup('weapon', S.police.x, S.police.z, { w: 'shotgun', ammo: 18 });
+  at('weapon', 500, 95, { w: 'rifle', ammo: 150 }); // Northpoint
+  addPickup('weapon', AIRPORT.apron.x + AIRPORT.dir.x * 120, AIRPORT.apron.z + AIRPORT.dir.z * 120, { w: 'rpg', ammo: 8 });
+  at('weapon', 245, 520, { w: 'smg', ammo: 90 });
+  at('weapon', 600, 300, { w: 'rifle', ammo: 90 });
+  addPickup('health', S.hospital.spawnX, S.hospital.spawnZ, {});
+  at('health', 360, 520, {});
+  at('health', 690, 520, {});
+  at('health', 130, 410, {});
+  addPickup('armor', S.police.x + 4, S.police.z, {});
+  at('armor', 430, 600, {});
+  at('armor', 300, 240, {});
   for (const p of pickups) if (p.kind !== 'cash') blips.push({ x: p.x, z: p.z, color: p.kind === 'weapon' ? '#9ccc65' : p.kind === 'health' ? '#ef5350' : '#42a5f5', size: 3, edge: false, pk: p });
 }
 
@@ -182,11 +183,11 @@ function defineMissions() {
   MISSIONS.push({
     id: 'race',
     title: 'Downtown Dash',
-    giver: cp(50, -82),
+    giver: spot(255, 300),
     reward: 1500,
     desc: 'Street race. Hit every checkpoint before the clock runs out.',
     start(m) {
-      m.cps = [[100, -150], [300, -200], [400, 0], [300, 300], [-100, 400], [-200, 200], [-500, 0], [-200, -300], [0, -400], [100, -100]].map(([x, z]) => cp(x, z));
+      m.cps = [[270, 280], [305, 245], [320, 205], [290, 170], [245, 190], [215, 230], [205, 285], [230, 330], [270, 330], [262, 300]].map(([x, z]) => spot(x, z, true));
       m.i = 0;
       m.time = 105;
       if (!G.player.vehicle) {
@@ -225,12 +226,12 @@ function defineMissions() {
   MISSIONS.push({
     id: 'steal',
     title: 'Hot Property',
-    giver: cp(CL[13] + 9.5, CL[7] + 40),
+    giver: spot(300, 280),
     reward: 2500,
-    desc: "A collector wants the gold coupe parked at Coral Beach. Bring it to the Pay 'n' Spray in one piece.",
+    desc: "A collector wants the gold coupe parked in Coral Bay. Bring it to the Pay 'n' Spray in one piece.",
     start(m) {
-      const t = TOWNS[1];
-      m.car = new Vehicle('sports', t.x + 40, t.z - 80, 1.2, 0xd4af37);
+      const t = spot(460, 610, true);
+      m.car = new Vehicle('sports', t.x - t.s.dz * 3, t.z + t.s.dx * 3, t.heading, 0xd4af37);
       m.car.persist = true;
       m.stage = 0;
       m.blip = { x: m.car.pos.x, z: m.car.pos.z, color: '#4fc3f7', size: 6 };
@@ -242,7 +243,7 @@ function defineMissions() {
       m.blip.x = v.pos.x;
       m.blip.z = v.pos.z;
       if (m.stage === 0) {
-        setObjective('<b>Hot Property</b> · Steal the <span class="hl">gold coupe</span> at Coral Beach');
+        setObjective('<b>Hot Property</b> · Steal the <span class="hl">gold coupe</span> in Coral Bay');
         if (G.player.vehicle === v) {
           m.stage = 1;
           setWanted(Math.max(wanted.level, 2));
@@ -275,9 +276,9 @@ function defineMissions() {
   MISSIONS.push({
     id: 'turf',
     title: 'Turf War',
-    giver: cp(CL[5] + 9.5, CL[3] + 50),
+    giver: spot(175, 250),
     reward: 3000,
-    desc: 'The Purple Kingz have been squeezing the Riverside shops. Take out 10 of them.',
+    desc: 'The Purple Kingz have been squeezing the Old Harbour shops. Take out 10 of them.',
     start(m) {
       m.kills = 0;
       m.need = 10;
@@ -301,14 +302,20 @@ function defineMissions() {
   MISSIONS.push({
     id: 'rings',
     title: 'Sky High',
-    giver: { x: 1215, z: -80 },
+    giver: { x: AIRPORT.threshold.x - AIRPORT.dir.z * 30, z: AIRPORT.threshold.z + AIRPORT.dir.x * 30 },
     reward: 4000,
-    desc: 'Take a stunt plane up and fly through every ring over Ember Ridge.',
+    desc: 'Take a stunt plane up and fly through every ring over Mt. Ember.',
     start(m) {
-      m.rings = [[1700, -120, 60], [1200, -700, 140], [600, -1300, 260], [100, -1900, 420], [-500, -2200, 460], [-900, -1500, 300], [-400, -800, 150], [400, -300, 90]].map(([x, z, y]) => ({ x, z, y }));
+      // rings over the island, each well clear of the ground below it
+      m.rings = [[560, 480, 90], [610, 400, 160], [620, 320, 240], [590, 240, 300], [520, 200, 260], [470, 260, 200], [520, 330, 150], [560, 420, 110]].map(([px, py, y]) => {
+        const w = px2w(px, py);
+        let g = 0;
+        for (let a = 0; a < 6.28; a += 0.8) g = Math.max(g, terrainHeight(w.x + Math.cos(a) * 60, w.z + Math.sin(a) * 60));
+        return { x: w.x, z: w.z, y: Math.max(y, g + 70) };
+      });
       m.i = 0;
       m.time = 240;
-      help('Board a <b>stunt plane</b> at the west end of the runway (F). <b>W/S</b> throttle, <b>A/D</b> roll, <b>↑/↓</b> or <b>Shift/Space</b> pitch, <b>Q/E</b> rudder.', 8);
+      help('Board a <b>stunt plane</b> at the end of the runway (F). <b>W/S</b> throttle, <b>A/D</b> roll, <b>↑/↓</b> or <b>Shift/Space</b> pitch, <b>Q/E</b> rudder.', 8);
       this.showRing(m);
     },
     showRing(m) {
@@ -346,18 +353,19 @@ function defineMissions() {
   });
   MISSIONS.push({
     id: 'deliver',
-    title: 'Desert Run',
-    giver: cp(CL[16] - 9, CL[8] + 50),
+    title: 'Red Dust Run',
+    giver: spot(272, 300),
     reward: 2000,
-    desc: 'Drive a box truck of "auto parts" to Sandy Rock before the rival crew intercepts it.',
+    desc: 'Drive a box truck of "auto parts" out to the Red Dust Flats before the rival crew intercepts it.',
     start(m) {
-      const tp = cp(CL[16] + 12, CL[8] + 55);
-      m.truck = new Vehicle('truck', tp.x, tp.z, 0, 0xeceff1);
+      const tp = spot(276, 300, true);
+      m.truck = new Vehicle('truck', tp.x - tp.s.dz * 2.5, tp.z + tp.s.dx * 2.5, tp.heading, 0xeceff1);
       m.truck.persist = true;
-      m.time = 200;
-      const t = TOWNS[0];
-      m.dest = makeMarker(t.x + 40, t.z - 40, 6, 6, 0x4fc3f7);
-      m.dpos = { x: t.x + 40, z: t.z - 40 };
+      m.time = 240;
+      m.from = { x: tp.x, z: tp.z };
+      const t = spot(240, 510, true);
+      m.dest = makeMarker(t.x, t.z, 6, 6, 0x4fc3f7);
+      m.dpos = { x: t.x, z: t.z };
       m.blip = { x: m.dpos.x, z: m.dpos.z, color: '#4fc3f7', size: 6 };
       blips.push(m.blip);
       m.chasers = 0;
@@ -366,9 +374,9 @@ function defineMissions() {
       const v = m.truck;
       if (v.dead) return fail('The cargo went up in flames!');
       if (G.player.vehicle === v) m.time -= dt;
-      setObjective(`<b>Desert Run</b> · Get the truck to <span class="hl">Sandy Rock</span> · <span class="timer">${Math.ceil(m.time)}s</span>`);
+      setObjective(`<b>Red Dust Run</b> · Get the truck to the <span class="hl">Red Dust Flats</span> · <span class="timer">${Math.ceil(m.time)}s</span>`);
       if (m.time <= 0) return fail('Too slow. The buyer left.');
-      if (G.player.vehicle === v && m.chasers === 0 && Math.hypot(v.pos.x, v.pos.z) > 1100) {
+      if (G.player.vehicle === v && m.chasers === 0 && Math.hypot(v.pos.x - m.from.x, v.pos.z - m.from.z) > 1200) {
         m.chasers = 1;
         notify('Rival crew on your tail!');
         setWanted(Math.max(wanted.level, 2));
@@ -459,6 +467,6 @@ export function initMissions() {
   blips.push({ x: SPECIAL.hospital.x, z: SPECIAL.hospital.z, color: '#ef5350', size: 4, shape: 'sq', edge: false });
   blips.push({ x: SPECIAL.police.x, z: SPECIAL.police.z, color: '#42a5f5', size: 4, shape: 'sq', edge: false });
   blips.push({ x: SPECIAL.spray.x, z: SPECIAL.spray.z, color: '#ffb300', size: 4, shape: 'sq', edge: false });
-  blips.push({ x: 1700, z: 110, color: '#b0bec5', size: 4, shape: 'sq', edge: false });
+  blips.push({ x: AIRPORT.apron.x, z: AIRPORT.apron.z, color: '#b0bec5', size: 4, shape: 'sq', edge: false });
   void AIRPORT; void Ped; void emit;
 }

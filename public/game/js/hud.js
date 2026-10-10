@@ -1,11 +1,11 @@
 // HUD: radar minimap, speedometer, stats, messages, full map, menus.
 import { G, clamp, lerp, on } from './core.js';
-import { H, TN, HALF, segs, buildings, blockType, blockRect, AIRPORT, GANGS, SPECIAL, desertF, mountainF, forestF, zoneName, LAKE, cityPt, removedV, removedH, CL, RIVER_PATH, TARN, cityShape, riverQuery } from './terrain.js';
+import { H, TN, HALF, segs, buildings, AIRPORTS, GANGS, SPECIAL, zoneName, biomeAt, urbanAt, BIOMES, DISTRICTS, REGIONS, junctions } from './terrain.js';
 import { WEAPONS } from './weapons.js';
 
 const $ = (id) => document.getElementById(id);
 let mapCanvas, radar, rctx, speedo, sctx, bigMap, bctx;
-const MAPPX = 2048;
+const MAPPX = 3072;
 const w2m = (x) => ((x + HALF) / (HALF * 2)) * MAPPX;
 
 export const blips = []; // {x,z,color,icon,label, pulse}
@@ -16,29 +16,32 @@ export function buildMapImage() {
   const g = mapCanvas.getContext('2d');
   const img = g.createImageData(MAPPX, MAPPX);
   const d = img.data;
+  const hAt = (i, j) => H[clamp(j, 0, TN) * (TN + 1) + clamp(i, 0, TN)];
   for (let py = 0; py < MAPPX; py++) {
     const z = (py / MAPPX) * HALF * 2 - HALF;
     const fj = ((z + HALF) / (HALF * 2)) * TN;
-    const j = Math.min(TN, Math.floor(fj));
+    const j = Math.floor(fj), tz = fj - j;
     for (let px = 0; px < MAPPX; px++) {
       const x = (px / MAPPX) * HALF * 2 - HALF;
-      const i = Math.min(TN, Math.floor(((x + HALF) / (HALF * 2)) * TN));
-      const h = H[j * (TN + 1) + i];
+      const fi = ((x + HALF) / (HALF * 2)) * TN;
+      const i = Math.floor(fi), tx = fi - i;
+      const h = lerp(lerp(hAt(i, j), hAt(i + 1, j), tx), lerp(hAt(i, j + 1), hAt(i + 1, j + 1), tx), tz);
       let r, gg, b;
       if (h < -0.4) { const k = clamp(-h / 25, 0, 1); r = 52 - k * 20; gg = 108 - k * 30; b = 150 - k * 20; }
       else {
         r = 86; gg = 120; b = 70;
-        const fw = forestF(x), dS = desertF(x, z), mN = mountainF(z);
-        if (fw > 0.4) { r = 58; gg = 98; b = 56; }
-        if (dS > 0.4) { r = 196; gg = 168; b = 120; }
-        if (mN > 0.4) { const k = clamp((h - 60) / 300, 0, 1); r = 96 + k * 120; gg = 110 + k * 105; b = 80 + k * 140; }
-        if (h < 2.2) { r = 200; gg = 188; b = 150; }
-        const shade = clamp(1 + (H[j * (TN + 1) + Math.max(0, i - 1)] - h) * 0.03, 0.75, 1.2);
+        const bi = biomeAt(x, z);
+        if (bi === BIOMES.FOREST) { r = 58; gg = 98; b = 56; }
+        else if (bi === BIOMES.DESERT) { r = 196; gg = 168; b = 120; }
+        else if (bi === BIOMES.WETLAND) { r = 76; gg = 104; b = 70; }
+        const k = clamp((h - 120) / 500, 0, 1);
+        r = lerp(r, 205, k); gg = lerp(gg, 205, k); b = lerp(b, 210, k);
+        if (h < 2.0) { r = 200; gg = 188; b = 150; }
+        const u = urbanAt(x, z);
+        if (u > 0.1) { const q = clamp((u - 0.1) * 2.5, 0, 0.85); r = lerp(r, 112, q); gg = lerp(gg, 114, q); b = lerp(b, 108, q); }
+        // hill shading from the north-west
+        const shade = clamp(1 + (hAt(i - 1, j - 1) - h) * 0.02, 0.7, 1.25);
         r *= shade; gg *= shade; b *= shade;
-        if (Math.abs(x) < 1150 && Math.abs(z) < 1150 && cityShape(x, z) > 0.55) {
-          const rq = riverQuery(x, z);
-          if (rq.d > rq.hw + 45) { r = 110; gg = 112; b = 106; } else { r = 84; gg = 128; b = 64; }
-        }
       }
       const o = (py * MAPPX + px) * 4;
       d[o] = r; d[o + 1] = gg; d[o + 2] = b; d[o + 3] = 255;
@@ -46,65 +49,39 @@ export function buildMapImage() {
   }
   g.putImageData(img, 0, 0);
   const sc = MAPPX / (HALF * 2);
-  // warped logical rectangle -> polygon on the map
-  const poly = (x0, x1, z0, z1) => {
-    const D = 4, P = {};
-    g.beginPath();
-    const pts = [];
-    for (let i = 0; i < D; i++) pts.push([lerp(x0, x1, i / D), z0]);
-    for (let j = 0; j < D; j++) pts.push([x1, lerp(z0, z1, j / D)]);
-    for (let i = D; i > 0; i--) pts.push([lerp(x0, x1, i / D), z1]);
-    for (let j = D; j > 0; j--) pts.push([x0, lerp(z0, z1, j / D)]);
-    pts.forEach(([lx, lz], k) => { cityPt(lx, lz, P); k ? g.lineTo(w2m(P.x), w2m(P.z)) : g.moveTo(w2m(P.x), w2m(P.z)); });
-    g.closePath();
-    g.fill();
-  };
-  // city blocks
-  for (let bi = 0; bi < 16; bi++)
-    for (let bj = 0; bj < 16; bj++) {
-      const t = blockType[bi][bj];
-      if (t === 'river' || t === 'void') continue;
-      const r = blockRect(bi, bj);
-      g.fillStyle = t === 'park' ? '#5c8a45' : t.startsWith('gang') ? '#7d7670' : '#9a9a92';
-      poly(r.x0, r.x1, r.z0, r.z1);
-      g.fillStyle = '#9a9a92';
-      if (bi > 0 && removedV[bi][bj] && blockType[bi - 1][bj] !== 'void') poly(CL[bi] - 8, CL[bi] + 8, r.z0, r.z1);
-      if (bj > 0 && removedH[bj][bi] && blockType[bi][bj - 1] !== 'void') poly(r.x0, r.x1, CL[bj] - 8, CL[bj] + 8);
-    }
-  // gang tint
+  // gang turf
   for (const gg of GANGS) {
-    g.fillStyle = gg.css + '40';
-    poly(gg.x0, gg.x1, gg.z0, gg.z1);
+    g.fillStyle = gg.css + '38';
+    g.beginPath();
+    g.arc(w2m(gg.x), w2m(gg.z), gg.r * sc, 0, Math.PI * 2);
+    g.fill();
   }
-  // the river, including the upland stretch above sea level
-  g.strokeStyle = '#3c78a0';
+  // airports
+  g.lineCap = 'butt';
+  for (const ap of AIRPORTS) {
+    g.strokeStyle = '#6f7275';
+    for (const r of ap.runways) {
+      g.lineWidth = r.w * sc * 1.2;
+      g.beginPath(); g.moveTo(w2m(r.x0), w2m(r.z0)); g.lineTo(w2m(r.x1), w2m(r.z1)); g.stroke();
+    }
+    const A = ap.apron;
+    g.strokeStyle = '#8c8f92';
+    g.lineWidth = 90 * sc;
+    g.beginPath(); g.moveTo(w2m(A.x - ap.dir.x * A.len / 2), w2m(A.z - ap.dir.z * A.len / 2)); g.lineTo(w2m(A.x + ap.dir.x * A.len / 2), w2m(A.z + ap.dir.z * A.len / 2)); g.stroke();
+  }
+  // roads: rural first, main roads on top
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  for (let i = 0; i < RIVER_PATH.length - 1; i++) {
-    const a = RIVER_PATH[i], b = RIVER_PATH[i + 1];
-    g.lineWidth = Math.max(2, a.hw * 2 * sc);
-    g.beginPath();
-    g.moveTo(w2m(a.x), w2m(a.z));
-    g.lineTo(w2m(b.x), w2m(b.z));
-    g.stroke();
-  }
-  g.fillStyle = '#3c78a0';
-  g.beginPath();
-  g.arc(w2m(TARN.x), w2m(TARN.z), TARN.r * sc, 0, Math.PI * 2);
-  g.fill();
-  // airport
-  g.fillStyle = '#7a7d80';
-  g.fillRect(w2m(AIRPORT.runwayX0), w2m(AIRPORT.runwayZ - 25), (AIRPORT.runwayX1 - AIRPORT.runwayX0) * sc, 50 * sc);
-  g.fillRect(w2m(1250), w2m(60), 800 * sc, 120 * sc);
-  // roads
-  g.lineCap = 'round';
-  for (const s of segs) {
-    g.strokeStyle = s.kind === 'hwy' ? '#e3d6a6' : '#d9d9d4';
-    g.lineWidth = Math.max(2.2, s.w * sc * 1.05);
-    g.beginPath();
-    g.moveTo(w2m(s.a.x), w2m(s.a.z));
-    g.lineTo(w2m(s.b.x), w2m(s.b.z));
-    g.stroke();
+  for (const kind of ['rural', 'city', 'main']) {
+    g.strokeStyle = kind === 'main' ? '#e3d6a6' : kind === 'city' ? '#d9d9d4' : '#c9c2ae';
+    for (const s of segs) {
+      if (s.kind !== kind) continue;
+      g.lineWidth = Math.max(kind === 'main' ? 2.4 : 1.6, s.w * sc * 1.05);
+      g.beginPath();
+      g.moveTo(w2m(s.a.x), w2m(s.a.z));
+      g.lineTo(w2m(s.b.x), w2m(s.b.z));
+      g.stroke();
+    }
   }
   // buildings
   g.fillStyle = '#5d6168';
@@ -119,6 +96,7 @@ export function buildMapImage() {
     g.closePath();
     g.fill();
   }
+  void junctions;
   return mapCanvas;
 }
 
@@ -275,7 +253,7 @@ function drawRadar() {
   };
   // gang zones
   for (const gg of GANGS) {
-    if (gg.hostile > 0) drawBlip(gg.cx, gg.cz, gg.css, 6, 'sq', false);
+    if (gg.hostile > 0) drawBlip(gg.x, gg.z, gg.css, 6, 'sq', false);
   }
   for (const b of blips) {
     if (b.hidden) continue;
@@ -405,17 +383,10 @@ export function drawBigMap() {
     g.fillStyle = c;
     g.fillText(t, a, b + 4 * devicePixelRatio);
   };
-  label('DOWNTOWN', 0, 0);
-  label('CRIMSON INTL AIRPORT', 1700, -260);
-  label('RED DUST DESERT', 1900, 1500, '#ffe0b2');
-  label('SANDY ROCK', 2100, 2230);
-  label('MT. EMBER', 100, -2300, '#e3f2fd');
-  label('EMBER RIDGE', -700, -1700);
-  label('PINEWOOD FOREST', -2100, -700, '#c8e6c9');
-  label('MIRROR LAKE', LAKE.x, LAKE.z + 230);
-  label('CORAL BEACH', -650, 2520);
-  { const r = RIVER_PATH[Math.floor(RIVER_PATH.length * 0.15)]; label('CRIMSON RIVER', r.x + 120, r.z, '#b3e5fc'); }
-  for (const gg of GANGS) label(gg.name.toUpperCase(), gg.cx, gg.cz, gg.css);
+  for (const dd of DISTRICTS) label(dd.name.toUpperCase(), dd.x, dd.z);
+  for (const r of REGIONS) label(r.name.toUpperCase(), r.x, r.z, '#e3f2fd');
+  for (const ap of AIRPORTS) label(ap.name.toUpperCase(), ap.x, ap.z - 260, '#cfd8dc');
+  for (const gg of GANGS) label(gg.name.toUpperCase(), gg.x, gg.z + gg.r * 0.6, gg.css);
   const dot = (x, z, c, r = 6) => {
     const [a, b] = tp(x, z);
     g.fillStyle = c;

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, GRAV, WATER, clamp, damp, rand, pick, angWrap, emit, on } from './core.js';
 import {
-  groundHeight, collideCircle, isWater, blockType, cornerPos, walkableBlock, CL, GANGS, TOWNS, terrainHeight, losClear, toLogical, waterLevel,
+  groundHeight, collideCircle, isWater, GANGS, terrainHeight, losClear, waterLevel, segs, segsAt, urbanAt, gangAt, SIDEWALK,
 } from './terrain.js';
 import { buildHuman, SKINS, SHIRTS, PANTS, HAIRS } from './models.js';
 import { spawn } from './fx.js';
@@ -16,6 +16,17 @@ export function gangLook(g) {
 }
 
 const _c = { x: 0, z: 0 };
+// next point to walk to on the pavement: the far end of the current segment, offset to the walker's side
+function pavementPoint(w, out) {
+  const s = w.s, n = w.fwd ? s.b : s.a;
+  const off = s.w / 2 + SIDEWALK * 0.5;
+  // stop short of junctions so people walk round the corner instead of through it
+  const back = n.edges.length > 2 ? off : 0;
+  const tx = w.fwd ? s.dx : -s.dx, tz = w.fwd ? s.dz : -s.dz;
+  out.x = n.x - s.dz * off * w.side - tx * back;
+  out.z = n.z + s.dx * off * w.side - tz * back;
+  return out;
+}
 
 export class Ped {
   constructor(x, z, type = 'civ', look = randomLook()) {
@@ -239,7 +250,7 @@ export class Ped {
 
   civAI(dt) {
     if (this.state === 'flee') {
-      if (this.stateT > 9) { this.state = 'walk'; this.corner = null; }
+      if (this.stateT > 9) { this.state = 'walk'; this.walk = null; }
       const tx = this.pos.x - this.threat.x, tz = this.pos.z - this.threat.z;
       this.move(dt, tx + Math.sin(this.stateT * 0.7 + this.phase) * 3, tz, 6.2);
       return;
@@ -260,41 +271,52 @@ export class Ped {
       if (this.stateT > 30) { this.target = null; this.stateT = 0; }
       return;
     }
-    if (!this.corner) this.pickNearestCorner();
-    if (!this.corner) { this.move(dt, 0, 0, 0); return; }
-    cornerPos(this.corner.bi, this.corner.bj, this.corner.cx, this.corner.cz, _c);
+    if (!this.walk) this.pickPavement();
+    if (!this.walk) { this.move(dt, 0, 0, 0); return; }
+    pavementPoint(this.walk, _c);
     const dx = _c.x - this.pos.x, dz = _c.z - this.pos.z;
-    if (dx * dx + dz * dz < 1.2) {
-      this.nextCorner();
+    if (dx * dx + dz * dz < 1.5) {
+      this.nextPavement();
       return;
     }
     this.move(dt, dx, dz, this.walkSpeed || 1.4);
   }
 
-  pickNearestCorner() {
-    const l = toLogical(this.pos.x, this.pos.z);
-    const bi = clamp(Math.floor((l.x + 800) / 100), 0, 15), bj = clamp(Math.floor((l.z + 800) / 100), 0, 15);
-    if (!walkableBlock(bi, bj)) return;
-    const r = { bi, bj, cx: l.x > CL[bi] + 50 ? 1 : 0, cz: l.z > CL[bj] + 50 ? 1 : 0 };
-    this.corner = r;
-  }
-  nextCorner() {
-    const c = this.corner;
-    const opts = [
-      { bi: c.bi, bj: c.bj, cx: 1 - c.cx, cz: c.cz },
-      { bi: c.bi, bj: c.bj, cx: c.cx, cz: 1 - c.cz },
-    ];
-    if (Math.random() < 0.35) {
-      const ni = c.bi + (c.cx ? 1 : -1), nj = c.bj + (c.cz ? 1 : -1);
-      if (walkableBlock(ni, c.bj)) opts.push({ bi: ni, bj: c.bj, cx: 1 - c.cx, cz: c.cz });
-      if (walkableBlock(c.bi, nj)) opts.push({ bi: c.bi, bj: nj, cx: c.cx, cz: 1 - c.cz });
+  // walk along the pavement of the nearest town street
+  pickPavement() {
+    const l = segsAt(this.pos.x, this.pos.z);
+    if (!l) return;
+    let best = null, bd = Infinity;
+    for (const s of l) {
+      if (!s.sidewalk) continue;
+      const mx = (s.a.x + s.b.x) / 2, mz = (s.a.z + s.b.z) / 2;
+      const d = Math.hypot(mx - this.pos.x, mz - this.pos.z);
+      if (d < bd) { bd = d; best = s; }
     }
-    // avoid going back
-    let o = pick(opts);
-    if (this.prevCorner && o.bi === this.prevCorner.bi && o.bj === this.prevCorner.bj && o.cx === this.prevCorner.cx && o.cz === this.prevCorner.cz) o = pick(opts);
-    this.prevCorner = c;
-    this.corner = o;
-    if (Math.random() < 0.08) { this.state = 'idle'; this.stateT = 0; this.idleFor = rand(1.5, 5); }
+    if (!best) return;
+    const side = (this.pos.x - best.a.x) * -best.dz + (this.pos.z - best.a.z) * best.dx > 0 ? 1 : -1;
+    this.walk = { s: best, fwd: Math.random() < 0.5, side };
+  }
+  nextPavement() {
+    const w = this.walk;
+    const n = w.fwd ? w.s.b : w.s.a;
+    // carry on along the street most of the time; turn at junctions now and then
+    const opts = n.edges.filter((e) => e.s !== w.s && e.s.sidewalk);
+    if (!opts.length) { w.fwd = !w.fwd; w.side = -w.side; return; }
+    const dirIn = w.fwd ? [w.s.dx, w.s.dz] : [-w.s.dx, -w.s.dz];
+    let e = opts[0];
+    if (opts.length > 1) {
+      const straight = opts.reduce((a, b) => {
+        const da = (a.n.x - n.x) * dirIn[0] + (a.n.z - n.z) * dirIn[1], db = (b.n.x - n.x) * dirIn[0] + (b.n.z - n.z) * dirIn[1];
+        return da / a.s.len > db / b.s.len ? a : b;
+      });
+      e = Math.random() < 0.7 ? straight : pick(opts);
+    }
+    const fwd = e.s.a === n;
+    // keep to the same side of the road relative to the walking direction
+    const sdir = fwd ? 1 : -1;
+    this.walk = { s: e.s, fwd, side: w.side * (w.fwd ? 1 : -1) * sdir };
+    if (Math.random() < 0.04) { this.state = 'idle'; this.stateT = 0; this.idleFor = rand(1.5, 5); }
   }
 
   scare(x, z) {
@@ -411,27 +433,14 @@ export function updatePeds(dt) {
     const d = Math.hypot(p.pos.x - px, p.pos.z - pz);
     if (d > (p.type === 'gang' ? 360 : p.type === 'cop' ? 300 : 210)) p.remove();
   }
-  // civilians in city
-  const inCity = Math.abs(px) < 900 && Math.abs(pz) < 900;
+  // pedestrians on town pavements
+  const urban = urbanAt(px, pz);
   const civ = G.peds.filter((p) => p.type === 'civ' && !p.dead).length;
-  const wantCiv = inCity ? (G.night > 0.6 ? 26 : 46) : 0;
+  const wantCiv = urban > 0.08 ? Math.round((G.night > 0.6 ? 26 : 46) * clamp(urban * 2, 0.35, 1)) : 0;
   for (let k = 0; k < 4 && civ + k < wantCiv; k++) spawnCityPed(px, pz);
-  // town folk
-  for (const t of TOWNS) {
-    if (t.n === 0) continue;
-    const d = Math.hypot(t.x - px, t.z - pz);
-    if (d < 260) {
-      const cnt = G.peds.filter((p) => p.town === t && !p.dead).length;
-      if (cnt < 9) {
-        const a = Math.random() * Math.PI * 2, r = Math.random() * t.r;
-        const p = new Ped(t.x + Math.cos(a) * r, t.z + Math.sin(a) * r, 'civ');
-        p.town = t;
-      }
-    }
-  }
   // gangs
   for (const g of GANGS) {
-    const d = Math.hypot(g.cx - px, g.cz - pz);
+    const d = Math.hypot(g.x - px, g.z - pz);
     if (g.hostile > 0) g.hostile -= 0.5;
     if (d > 200 + 100) { g.warned = false; g.annoy = 0; }
     if (d < 320) {
@@ -444,33 +453,36 @@ export function updatePeds(dt) {
   }
 }
 
-function spawnCityPed(px, pz) {
-  for (let tries = 0; tries < 6; tries++) {
-    const a = Math.random() * Math.PI * 2, r = rand(40, 170);
+function pavementSegNear(px, pz, minD, maxD, filter) {
+  for (let tries = 0; tries < 10; tries++) {
+    const a = Math.random() * Math.PI * 2, r = rand(minD, maxD);
     const x = px + Math.cos(a) * r, z = pz + Math.sin(a) * r;
-    const l = toLogical(x, z);
-    const bi = Math.floor((l.x + 800) / 100), bj = Math.floor((l.z + 800) / 100);
-    if (!walkableBlock(bi, bj)) continue;
-    if (blockType[bi][bj].startsWith('gang')) continue;
-    const c = { bi, bj, cx: Math.random() < 0.5 ? 1 : 0, cz: Math.random() < 0.5 ? 1 : 0 };
-    cornerPos(bi, bj, c.cx, c.cz, _c);
-    // random point along an edge of the block
-    const r2 = { bi, bj, cx: c.cx, cz: 1 - c.cz };
-    const _d = { x: 0, z: 0 };
-    cornerPos(r2.bi, r2.bj, r2.cx, r2.cz, _d);
-    const t = Math.random();
-    const p = new Ped(_c.x + (_d.x - _c.x) * t, _c.z + (_d.z - _c.z) * t, 'civ');
-    p.corner = Math.random() < 0.5 ? c : r2;
-    p.walkSpeed = rand(1.2, 1.7);
-    return p;
+    const l = segsAt(x, z);
+    if (!l) continue;
+    const c = l.filter((s) => s.sidewalk && (!filter || filter(s)));
+    if (c.length) return pick(c);
   }
+  return null;
+}
+function spawnCityPed(px, pz) {
+  const s = pavementSegNear(px, pz, 40, 170, (s) => !gangAt(s.a.x, s.a.z));
+  if (!s) return null;
+  const w = { s, fwd: Math.random() < 0.5, side: Math.random() < 0.5 ? 1 : -1 };
+  const t = Math.random();
+  const off = s.w / 2 + SIDEWALK * 0.5;
+  const p = new Ped(s.a.x + s.dx * s.len * t - s.dz * off * w.side, s.a.z + s.dz * s.len * t + s.dx * off * w.side, 'civ');
+  p.walk = w;
+  p.walkSpeed = rand(1.2, 1.7);
+  return p;
 }
 
 function spawnGangGroup(g, px, pz) {
   for (let tries = 0; tries < 8; tries++) {
-    const bi = g.bi0 + Math.floor(Math.random() * (g.bi1 - g.bi0 + 1));
-    const bj = g.bj0 + Math.floor(Math.random() * (g.bj1 - g.bj0 + 1));
-    cornerPos(bi, bj, Math.random() < 0.5 ? 1 : 0, Math.random() < 0.5 ? 1 : 0, _c);
+    const s = pavementSegNear(g.x, g.z, 0, g.r * 0.85);
+    if (!s) continue;
+    const side = Math.random() < 0.5 ? 1 : -1, off = s.w / 2 + SIDEWALK * 0.5;
+    _c.x = (s.a.x + s.b.x) / 2 - s.dz * off * side;
+    _c.z = (s.a.z + s.b.z) / 2 + s.dx * off * side;
     const d = Math.hypot(_c.x - px, _c.z - pz);
     if (d < 50) continue;
     const n = 3;
