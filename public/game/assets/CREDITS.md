@@ -32,6 +32,10 @@ compression extensions). In-game names are fictional and the cars are not endors
 any manufacturer. Conversion scripts are in `tools/models/` in the repository; the
 Kenney cars remain as a fallback.
 
+Buildings are procedural (`js/world.js`): facades, windows, shopfronts and doors are drawn by a shader on a
+grid measured in metres, with a detail texture generated at load time, so they need no downloaded assets.
+The KayKit `kk_bld_A`-`H` models are no longer loaded (scaled up to fill a city lot they read as toys).
+
 ## Sound effects (`sfx/`)
 
 | Files | Source | License |
