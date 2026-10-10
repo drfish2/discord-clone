@@ -87,6 +87,9 @@ const BASE = {
   bodyFriction: 0.45, bodyRestitution: 0.15,
   frontGrip: 1.0, // front tyre grip multiplier (<1 = built-in understeer)
   wheelProbe: true, // 2 extra ground samples per wheel for kerbs/steps
+  cvMax: 4, // m/s: largest compression speed the damper / bump stop responds to
+  fzMaxG: 4, // per-wheel load cap in body weights (all four: 16 g)
+  boxClimb: 0.6, // m: highest box top (above the wheel's full droop) a wheel may climb onto
   wheelProbeClimb: 0.35, // m: probe samples read at most this much above the hub's own sample.
   // Kerbs (~0.15 m) and slabs (~0.3 m) still climb as designed; taller surfaces (road
   // edges in cuts, junction cross-roads) used to be grabbed by the probe and fired the
@@ -332,12 +335,12 @@ export class RaycastVehicle {
     this._updateR();
     this.pos.x = x; this.pos.y = y + this.p.cgHeight + 0.05; this.pos.z = z;
     this.vel.x = this.vel.y = this.vel.z = 0; this.angVel.x = this.angVel.y = this.angVel.z = 0;
-    for (const w of this.wheels) { w.omega = 0; w.comp = w.compPrev = 0; }
+    for (const w of this.wheels) { w.omega = 0; w.comp = w.compPrev = 0; w.gPrev = undefined; }
   }
 
   // ---- public step -----------------------------------------------------------
   // dt: frame time (any value up to ~0.05 s). input: {throttle, steer, handbrake, brake?}
-  // ground(x, z, yRef) -> height | {h, nx, ny, nz}. yRef = height of the strut top, so the
+  // ground(x, z, yRef, boxMax) -> height | {h, nx, ny, nz}. yRef = height of the strut top, so the
   //   game's groundHeight(x, z, maxY) can ignore roofs/bridges above the car.
   // obstacles (optional): array of static colliders near the car, see collideStatic().
   step(dt, input, ground, obstacles = null) {
@@ -437,7 +440,10 @@ export class RaycastVehicle {
       const reach = p.restLength + p.wheelRadius;
       // ray along -up from the strut top; ground is a height field, so intersect the ray
       // with the local tangent plane at the sample below the hub
-      const g0 = sampleGround(ground, mx - upX * reach * 0.7, mz - upZ * reach * 0.7, my);
+      // boxes (plinths, planters, low walls) count as ground only up to kerb/plinth height
+      // above the wheel's lowest reach; taller ones are walls for collideStatic
+      const boxMax = my - reach + p.boxClimb;
+      const g0 = sampleGround(ground, mx - upX * reach * 0.7, mz - upZ * reach * 0.7, my, false, boxMax);
       // round-wheel probe: also sample 0.7 R ahead/behind along the body's forward axis,
       // lowered by the wheel's curvature, so kerbs and steps are climbed over ~0.3 m instead
       // of hitting the bump stop in a single substep
@@ -447,13 +453,33 @@ export class RaycastVehicle {
         const h0 = g0.h;
         const climb = h0 + (p.wheelProbeClimb ?? 0.35);
         let hm = h0;
+        const R = p.wheelRadius;
         for (const sgn of [1, -1]) {
-          const r = ground(bx + fwX * a * sgn, bz + fwZ * a * sgn, my);
-          const hh = (typeof r === 'number' ? r : r.h) - drop;
+          const r = ground(bx + fwX * a * sgn, bz + fwZ * a * sgn, my, boxMax);
+          const raw = typeof r === 'number' ? r : r.h;
+          let hh = raw - drop;
+          // a step on this side: trace the tyre circle finely so the wheel rolls up it.
+          // With only the 0.7 R sample the wheel rose ~0.25 m in one substep at a kerb edge,
+          // the damper saw ~40 m/s compression and one wheel pushed 60 g (the pavement jump).
+          if (raw > h0 + 0.01) {
+            for (const f of PROBE_F) {
+              const af = R * f, q = ground(bx + fwX * af * sgn, bz + fwZ * af * sgn, my, boxMax);
+              const hq = (typeof q === 'number' ? q : q.h) - (R - Math.sqrt(R * R - af * af));
+              if (hq > hh) hh = hq;
+            }
+          }
           if (hh > hm) hm = Math.min(hh, climb);
         }
         g0.h = hm;
       }
+      // a tyre rolls up a step instead of teleporting onto it: the contact height may rise at
+      // most ~45 deg at the current ground speed per substep (sideways kerb crossings slip past
+      // the forward probes). Drops are instant; jumps over 1 m (respawn, teleport) aren't limited.
+      if (wh.gPrev !== undefined) {
+        const rise = g0.h - wh.gPrev, lim = 0.02 + Math.hypot(vel.x, vel.z) * h;
+        if (rise > lim && rise < 1) g0.h = wh.gPrev + lim;
+      }
+      wh.gPrev = g0.h;
       const denom = upX * g0.nx + upY * g0.ny + upZ * g0.nz; // cos(angle between up and normal)
       wh.compPrev = wh.comp;
       wh.contact = false;
@@ -483,7 +509,8 @@ export class RaycastVehicle {
       let comp = wh.comp;
       let fs = wh.k * Math.min(comp, p.maxTravel);
       if (comp > p.maxTravel) fs += wh.k * p.bumpStopRate * (comp - p.maxTravel); // bump stop
-      const cv = (wh.comp - (wh.compPrev || wh.comp)) / h; // compression velocity
+      // compression velocity, capped: a geometric step under the tyre is not a 10+ m/s damper stroke
+      const cv = clamp((wh.comp - (wh.compPrev || wh.comp)) / h, -p.cvMax, p.cvMax);
       // digressive damper: full rate up to the knee, then blow-off (sharp bumps don't launch the car)
       const av = Math.abs(cv), kn = p.damperKnee;
       const dv = av < kn ? av : kn + (av - kn) * p.damperHigh;
@@ -495,7 +522,8 @@ export class RaycastVehicle {
         const other = this.wheels[i ^ 1];
         arb = (wh.front ? p.arbF : p.arbR) * (comp - (other.contact ? other.comp : 0));
       }
-      wh.Fz = Math.max(0, fs + fd + arb);
+      // a wheel can't push more than fzMaxG body weights; harder hits bottom the body out instead
+      wh.Fz = clamp(fs + fd + arb, 0, p.fzMaxG * p.mass * p.gravity);
     }
 
     // ---------------- drivetrain ----------------
@@ -752,7 +780,9 @@ export class RaycastVehicle {
     for (const cn of this.corners) {
       const o = this.toWorld(cn[0], cn[1], cn[2], _t1);
       const px = pos.x + o.x, py = pos.y + o.y, pz = pos.z + o.z;
-      const g = sampleGround(ground, px, pz, py + 0.5, true);
+      // same rule as collideStatic: a box is under the body only if its top is within 0.25 m of
+      // the corner; anything taller is a wall, never an upward shove
+      const g = sampleGround(ground, px, pz, py + 0.5, true, py + 0.25);
       const pen = g.h - py;
       if (pen <= 0) continue;
       const c = C[n++];
@@ -793,16 +823,18 @@ export class RaycastVehicle {
 }
 
 // ----------------------------------------------------------------------------- ground
+// extra tyre-circle sample offsets (fractions of the wheel radius) used at kerbs/steps
+const PROBE_F = [0.15, 0.3, 0.45, 0.6, 0.8, 0.9];
 const G0 = { h: 0, nx: 0, ny: 1, nz: 0, grip: 1 };
 // Accepts a number or {h, nx, ny, nz, grip}. Without a normal, estimate it from two
 // extra samples (0.35 m apart) — enough to follow kerbs, ramps and terrain triangles.
-function sampleGround(ground, x, z, yRef, cheap = false) {
-  const r = ground(x, z, yRef);
+function sampleGround(ground, x, z, yRef, cheap = false, boxMax) {
+  const r = ground(x, z, yRef, boxMax);
   if (typeof r === 'number') {
     G0.h = r; G0.grip = 1;
     if (cheap) { G0.nx = 0; G0.ny = 1; G0.nz = 0; return G0; }
     const e = 0.35;
-    const hx = ground(x + e, z, yRef), hz = ground(x, z + e, yRef);
+    const hx = ground(x + e, z, yRef, boxMax), hz = ground(x, z + e, yRef, boxMax);
     const ax = (typeof hx === 'number' ? hx : hx.h) - r, az = (typeof hz === 'number' ? hz : hz.h) - r;
     // a step (kerb, slab edge) taller than 0.25 m over 0.35 m is treated as a wall, not a slope
     let dx = Math.abs(ax) > 0.25 ? 0 : ax, dz = Math.abs(az) > 0.25 ? 0 : az;

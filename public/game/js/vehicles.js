@@ -8,7 +8,7 @@ import { RaycastVehicle, paramsForVehicleType, collideBodies } from './car_physi
 // drivetrain); distant traffic keeps the cheap arcade model below.
 const PHYS_R = 170;
 const PHYS_GRAVITY = 9.81 * 1.25; // a touch heavier than real life so jumps don't float
-const groundFn = (x, z, yRef) => groundHeight(x, z, yRef);
+const groundFn = (x, z, yRef, boxMax) => groundHeight(x, z, yRef, boxMax);
 const _rp = {}, _eu = {}, _pin = { throttle: 0, steer: 0, handbrake: false };
 import { buildVehicleMesh, VSPEC, wreckMat } from './models.js';
 
