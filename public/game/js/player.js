@@ -24,6 +24,11 @@ export class Player extends Ped {
     this.fireT = 0;
     this.aiming = false;
     this.lastVehicle = null;
+    // weightier on-foot movement: gradual acceleration, wider turns at a sprint
+    this.accelK = 5.5;
+    this.brakeK = 7;
+    this.facingMove = true;
+    this.turnK = (speed) => (this.aim ? 30 : speed > 6 ? 6 : 10);
   }
 
   reset(x, z) {
@@ -288,7 +293,8 @@ export class Player extends Ped {
       r.position.set(v.pos.x - Math.sin(v.heading) * 0.25, v.pos.y + 0.05, v.pos.z - Math.cos(v.heading) * 0.25);
       r.rotation.set(-v.pitch, v.heading, v.roll, 'YXZ');
       this.sitting = true;
-      this.m.pose({ sit: true, legL: 1.3, legR: 1.3, kneeL: 1.5, kneeR: 1.5, armL: 1.1, armR: 1.1, lean: 0.35 });
+      if (this.m.animated) this.m.update({ drive: true, onGround: true, speed: 0 }, dt);
+      else this.m.pose({ sit: true, legL: 1.3, legR: 1.3, kneeL: 1.5, kneeR: 1.5, armL: 1.1, armR: 1.1, lean: 0.35 });
       this.setWeaponVisible(false);
     }
     if (v.dead || v.drowned > 0.4) {

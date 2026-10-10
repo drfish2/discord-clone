@@ -6,8 +6,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { setAnimationClips, hasAnimations, makeAnimatedRig } from './anim.js';
 
 const BASE = 'assets/models/';
+// realistic bodies, by role (files that are missing are skipped)
+export const HUMANS = {
+  player: ['mh_player'],
+  civ: ['mh_ped_m1', 'mh_ped_f1', 'mh_ped_m2', 'mh_ped_f2', 'mh_ped_m3', 'mh_ped_f3', 'mh_ped_m4', 'mh_ped_m5'],
+  cop: ['mh_cop'],
+  gang: ['mh_gang'],
+};
+function HUMAN_FILES() {
+  return [...new Set(Object.values(HUMANS).flat())];
+}
 // GLB by default; a host that can't serve .glb can set window.CC_MODEL_EXT (e.g. '.gltf.json')
 const EXT = (typeof window !== 'undefined' && window.CC_MODEL_EXT) || '.glb';
 export const FILES = [
@@ -15,7 +26,9 @@ export const FILES = [
   'sedan', 'sports-sedan', 'suv', 'suv-luxury', 'hatchback', 'taxi', 'police-car', 'van', 'truck', 'delivery-truck',
   'firetruck', 'garbage-truck', 'ambulance', 'race-car', 'tractor', 'helicopter', 'bike', 'motorcycle', 'aerobatic_plane',
   'boat-large',
-  // people (Kenney animated characters, CC0)
+  // people: realistic MakeHuman bodies (CC0) + shared animation clips (Quaternius UAL, CC0);
+  // Kenney's cartoon characters remain as a fallback
+  'mh_anims', ...HUMAN_FILES(),
   'male', 'survivor-male', 'survivor-female', 'skater-male', 'skater-female',
   // nature (Kenney / pmndrs market, CC0)
   'tree-big', 'tree-small', 'low-poly-tree', 'palm-long', 'palm-short', 'formation-rock',
@@ -77,7 +90,7 @@ export async function loadModels(onProgress) {
     FILES.map((n) =>
       loader
         .loadAsync(BASE + n + EXT)
-        .then((g) => raw.set(n, g))
+        .then((g) => { raw.set(n, g); if (n === 'mh_anims') setAnimationClips(g); })
         .catch((e) => console.warn('model missing, using fallback:', n, e && e.message))
         .finally(() => onProgress && onProgress(++done / FILES.length))
     )
@@ -338,8 +351,39 @@ function charTemplate(file) {
   return root;
 }
 
-// Returns a rig {root, pose(p), setGun(v), skinned:true} or null
+// realistic body templates (feet on the ground, facing +Z)
+const humanTemplates = new Map();
+function humanTemplate(file) {
+  if (humanTemplates.has(file)) return humanTemplates.get(file);
+  const g = raw.get(file);
+  let t = null;
+  if (g) {
+    t = g.scene;
+    t.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(t);
+    if (Math.abs(b.min.y) > 0.02) t.position.y -= b.min.y;
+  }
+  humanTemplates.set(file, t);
+  return t;
+}
+function pickHuman(kind, variant) {
+  const list = (HUMANS[kind] || HUMANS.civ).filter((f) => raw.has(f));
+  if (!list.length) return null;
+  return list[variant % list.length];
+}
+
+// Returns a rig {root, pose(p) or update(state, dt), setGun(v), skinned:true} or null
 export function buildCharacterModel(kind, variant = 0, tint = null) {
+  if (hasAnimations()) {
+    const file = pickHuman(kind, variant);
+    const tpl = file && humanTemplate(file);
+    if (tpl) {
+      const opts = {};
+      // uniforms and gang colours: tint the outfit material when the body has no dedicated one
+      if (kind === 'gang' && tint !== null) Object.assign(opts, { tint: /gangtop/i, tintColor: tint });
+      return makeAnimatedRig(tpl, opts);
+    }
+  }
   let file = CHAR_FILES[kind] || CHAR_FILES.civ;
   if (Array.isArray(file)) file = file[variant % file.length];
   const tpl = charTemplate(file);

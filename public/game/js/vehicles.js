@@ -1,7 +1,15 @@
 // Vehicle simulation: cars, bikes, helicopters, planes, boats.
 import * as THREE from 'three';
 import { G, GRAV, WATER, clamp, lerp, damp, emit, angWrap } from './core.js';
-import { groundHeight, collideCircle, isWater, terrainHeight, waterLevel } from './terrain.js';
+import { groundHeight, collideCircle, isWater, terrainHeight, waterLevel, buildingsNear } from './terrain.js';
+import { RaycastVehicle, paramsForVehicleType, collideBodies } from './car_physics.js';
+
+// Cars and bikes near the player use a full raycast-vehicle model (suspension, tyres,
+// drivetrain); distant traffic keeps the cheap arcade model below.
+const PHYS_R = 170;
+const PHYS_GRAVITY = 9.81 * 1.25; // a touch heavier than real life so jumps don't float
+const groundFn = (x, z, yRef) => groundHeight(x, z, yRef);
+const _rp = {}, _eu = {}, _pin = { throttle: 0, steer: 0, handbrake: false };
 import { buildVehicleMesh, VSPEC, wreckMat } from './models.js';
 
 const wreckModelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 1 });
@@ -188,7 +196,114 @@ export class Vehicle {
     return impact;
   }
 
+  // ---------------------------------------------------------------- realistic physics
+  attachPhys() {
+    const p = paramsForVehicleType(this.type, this.spec, { gravity: PHYS_GRAVITY });
+    const ph = new RaycastVehicle(p, { x: this.pos.x, z: this.pos.z, y: this.pos.y, heading: this.heading });
+    ph.vel.x = this.vel.x; ph.vel.y = this.vy || 0; ph.vel.z = this.vel.z;
+    this.phys = ph;
+    this.snapSync();
+  }
+  detachPhys() {
+    this.phys = null;
+    this._sync = null;
+  }
+  snapSync() {
+    const S = this._sync || (this._sync = {});
+    S.x = this.pos.x; S.y = this.pos.y; S.z = this.pos.z; S.h = this.heading;
+    S.vx = this.vel.x; S.vy = this.vy; S.vz = this.vel.z;
+  }
+  // other code (AI spawns, explosions, police) writes position/velocity/heading directly:
+  // carry those edits over into the physics body
+  pullExternal() {
+    const S = this._sync, ph = this.phys;
+    if (!S) return;
+    if (Math.abs(this.heading - S.h) > 1e-4) {
+      const e = ph.getEuler(_eu);
+      const dh = this.heading - e.heading;
+      const q = ph.q, hs = Math.sin(dh / 2), hc = Math.cos(dh / 2);
+      // pre-multiply by a yaw rotation
+      const x = hc * q.x + hs * q.z, y = hc * q.y + hs * q.w, z = hc * q.z - hs * q.x, w = hc * q.w - hs * q.y;
+      q.x = x; q.y = y; q.z = z; q.w = w;
+      ph._updateR();
+    }
+    const dx = this.pos.x - S.x, dy = this.pos.y - S.y, dz = this.pos.z - S.z;
+    if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 1e-4) { ph.pos.x += dx; ph.pos.y += dy; ph.pos.z += dz; }
+    if (Math.abs(this.vel.x - S.vx) + Math.abs(this.vel.z - S.vz) > 1e-4) { ph.vel.x = this.vel.x; ph.vel.z = this.vel.z; }
+    if (Math.abs(this.vy - S.vy) > 1e-4) ph.vel.y = this.vy;
+  }
+  pushPhys() {
+    const ph = this.phys;
+    const r = ph.getRootPosition(_rp);
+    this.pos.set(r.x, r.y, r.z);
+    const e = ph.getEuler(_eu);
+    this.heading = e.heading;
+    this.pitch = e.pitch;
+    this.roll = e.roll;
+    this.vel.set(ph.vel.x, ph.vel.y, ph.vel.z);
+    this.vy = ph.vel.y;
+    this.snapSync();
+  }
+  updateCarPhys(dt) {
+    const ph = this.phys, I = this.input, s = this.spec;
+    this.pullExternal();
+    const live = !this.dead && this.drowned === 0;
+    _pin.throttle = live ? I.throttle : 0;
+    _pin.steer = live ? I.steer : 0;
+    _pin.handbrake = live ? I.handbrake : true;
+    ph.step(dt, _pin, groundFn, buildingsNear(this.pos.x, this.pos.z));
+    this.pushPhys();
+    const was = this.onGround;
+    this.onGround = ph.wheelsOnGround > 0;
+    if (!this.onGround) this.air += dt;
+    else {
+      if (!was && this.air > 0.3) emit('landed', this, this.air);
+      this.air = 0;
+    }
+    // wheels: steering angle and spin from the simulated wheels
+    this.steer = ph.p.maxSteer ? ph.steerAngle / ph.p.maxSteer : 0;
+    const rw = ph.wheels[ph.wheels.length - 1];
+    this.spin += rw.omega * dt;
+    // skids and impacts
+    this.slip = ph.telemetry.skid * 10;
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    if (ph.telemetry.skid > 0.25 && Math.random() < dt * 25) spawn('skid', this.pos.x - fx * s.len * 0.4, this.pos.y + 0.2, this.pos.z - fz * s.len * 0.4, 1, 0.3);
+    const impact = ph.lastImpact;
+    if (impact > 3) {
+      emit('vehicleImpact', this, impact);
+      if (impact > 7) {
+        this.damage(((impact - 7) * 2.2) / Math.sqrt(s.mass));
+        spawn('spark', this.pos.x + fx * s.len * 0.5, this.pos.y + 0.6, this.pos.z + fz * s.len * 0.5, 6, 2);
+      }
+    }
+    // stuck on its roof: the player's car is put back on its wheels after a moment
+    if (ph.isFlipped() && ph.speed < 1.5) {
+      this.flipT = (this.flipT || 0) + dt;
+      if (this.flipT > 2.5) {
+        ph.reset(this.pos.x, groundHeight(this.pos.x, this.pos.z, this.pos.y + 2) + 0.3, this.pos.z, this.heading);
+        this.pushPhys();
+        this.flipT = 0;
+      }
+    } else this.flipT = 0;
+    // water: hand over to the arcade model, which sinks the car
+    const wl = waterLevel(this.pos.x, this.pos.z);
+    if (this.pos.y < wl - 0.6 && isWater(this.pos.x, this.pos.z)) {
+      this.detachPhys();
+      this.drowned = 0.01;
+      spawn('splash', this.pos.x, wl + 0.3, this.pos.z, 40, 3, 0, 6, 0);
+      emit('vehicleDrowned', this);
+    }
+  }
+
   updateCar(dt) {
+    if (!this.drowned && !G.arcadeCars) {
+      const P = G.player;
+      const pp = P && (P.vehicle ? P.vehicle.pos : P.pos);
+      const near = this.driver === G.player || (pp && Math.abs(pp.x - this.pos.x) + Math.abs(pp.z - this.pos.z) < PHYS_R);
+      if (near && !this.phys) this.attachPhys();
+      else if (!near && this.phys) this.detachPhys();
+      if (this.phys) return this.updateCarPhys(dt);
+    } else if (this.phys) this.detachPhys();
     const s = this.spec, I = this.input;
     const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
     const rx = -fz, rz = fx;
@@ -512,6 +627,21 @@ export function collideVehicles(dt) {
       const rs = a.radius * 0.8 + b.radius * 0.8;
       if (Math.abs(dx) > rs || Math.abs(dz) > rs) continue;
       if (Math.abs(a.pos.y - b.pos.y) > 2.5) continue;
+      if (a.phys && b.phys) {
+        const impact = collideBodies(a.phys, b.phys);
+        if (impact > 0) {
+          a.pushPhys();
+          b.pushPhys();
+          if (impact > 5) {
+            const ma = a.spec.mass, mb = b.spec.mass;
+            a.damage((impact - 5) * 1.1 * (mb / ma), b.driver);
+            b.damage((impact - 5) * 1.1 * (ma / mb), a.driver);
+            emit('vehicleCrash', a, b, impact);
+            spawn('spark', (a.pos.x + b.pos.x) / 2, a.pos.y + 0.7, (a.pos.z + b.pos.z) / 2, 8, 2);
+          }
+        }
+        continue;
+      }
       // refine with oriented boxes (separating axis on 2 axes each)
       const pen = obbPen(a, b);
       if (!pen) continue;

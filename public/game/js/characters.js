@@ -8,7 +8,7 @@ import { buildHuman, SKINS, SHIRTS, PANTS, HAIRS } from './models.js';
 import { spawn } from './fx.js';
 
 export function randomLook() {
-  return { skin: pick(SKINS), shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS), variant: Math.floor(Math.random() * 4) };
+  return { skin: pick(SKINS), shirt: pick(SHIRTS), pants: pick(PANTS), hair: pick(HAIRS), variant: Math.floor(Math.random() * 1000) };
 }
 export const COP_LOOK = { skin: 0xe0ac69, shirt: 0x1f3a68, pants: 0x14213d, hair: 0x0d1b33, cap: true };
 export function gangLook(g) {
@@ -101,12 +101,19 @@ export class Ped {
     const len = Math.hypot(dirX, dirZ);
     if (len > 0.001) {
       dirX /= len; dirZ /= len;
-      this.heading = angWrap(this.heading + angWrap(Math.atan2(dirX, dirZ) - this.heading) * clamp(dt * 10, 0, 1));
-      this.vel.x = damp(this.vel.x, dirX * speed, 10, dt);
-      this.vel.z = damp(this.vel.z, dirZ * speed, 10, dt);
+      // turn first, then move: velocity follows the facing, so the body leads into turns
+      const turnK = this.turnK ? this.turnK(speed) : 10;
+      this.heading = angWrap(this.heading + angWrap(Math.atan2(dirX, dirZ) - this.heading) * clamp(dt * turnK, 0, 1));
+      const accK = this.accelK || 10;
+      const fm = this.facingMove && !this.aim;
+      const fx = fm ? Math.sin(this.heading) : dirX, fz = fm ? Math.cos(this.heading) : dirZ;
+      const align = fm ? clamp((fx * dirX + fz * dirZ) * 1.2, 0.15, 1) : 1;
+      this.vel.x = damp(this.vel.x, fx * speed * align, accK, dt);
+      this.vel.z = damp(this.vel.z, fz * speed * align, accK, dt);
     } else {
-      this.vel.x = damp(this.vel.x, 0, 10, dt);
-      this.vel.z = damp(this.vel.z, 0, 10, dt);
+      const k = this.brakeK || 10;
+      this.vel.x = damp(this.vel.x, 0, k, dt);
+      this.vel.z = damp(this.vel.z, 0, k, dt);
     }
     this.physics(dt);
   }
@@ -154,6 +161,7 @@ export class Ped {
   }
 
   animate(dt) {
+    if (this.m.animated) return this.animateRig(dt);
     const r = this.root;
     const P = this.poseP || (this.poseP = {});
     P.legL = P.legR = P.kneeL = P.kneeR = P.armL = P.armR = P.lean = P.aimPitch = 0;
@@ -220,6 +228,35 @@ export class Ped {
       P.aim = P.lift = false;
     }
     this.m.pose(P);
+  }
+
+  // skeletal animation: tell the rig what the person is doing
+  animateRig(dt) {
+    const r = this.root;
+    r.position.copy(this.pos);
+    const S = this.animS || (this.animS = {});
+    const down = !this.dead && this.ragdoll > 0;
+    if (down && !this.onGround) {
+      r.rotation.order = 'YXZ';
+      r.rotation.x += this.spinX * dt;
+      r.rotation.y = this.heading;
+    } else r.rotation.set(0, this.heading, 0, 'YXZ');
+    S.speed = this.dead || down ? 0 : Math.hypot(this.vel.x, this.vel.z);
+    S.onGround = this.onGround;
+    S.swim = this.swim && !this.dead;
+    if (S.swim) r.position.y = (this.waterY ?? WATER) - 0.35;
+    S.dead = this.dead;
+    S.down = down;
+    S.aim = !!this.aim && !this.dead;
+    S.aimPitch = this.aimPitch || 0;
+    S.punch = this.punchT > 0;
+    if (this.punchT > 0) this.punchT -= dt;
+    S.armed = this.m.gun.visible;
+    S.drive = !!this.sitting;
+    S.sit = false;
+    const c = G.camera.position;
+    S.far = Math.abs(c.x - this.pos.x) + Math.abs(c.z - this.pos.z) > 70;
+    this.m.update(S, dt);
   }
 
   // ---------------------------------------------------------------- AI

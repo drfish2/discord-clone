@@ -82,7 +82,7 @@ export class PoliceAI {
     const dx = tp.x - v.pos.x, dz = tp.z - v.pos.z;
     const d = Math.hypot(dx, dz);
     let tx = tp.x, tz = tp.z;
-    const direct = d < 70 || Math.abs(v.pos.x) > 860 || Math.abs(v.pos.z) > 860;
+    const direct = d < 70;
     if (direct) {
       if (tgtV) { tx += tgtV.vel.x * 0.5; tz += tgtV.vel.z * 0.5; }
     } else {
