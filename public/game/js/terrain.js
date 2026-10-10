@@ -534,9 +534,9 @@ function genNature() {
       if (b === BIOMES.DESERT) { addTree(jx, jz, R() < 0.55 ? 'cactus' : R() < 0.5 ? 'rock' : 'bush', rr(0.7, 1.4)); continue; }
       if (b === BIOMES.ALPINE || sl > 7) { addTree(jx, jz, R() < 0.5 && h < 400 ? 'pine' : 'rock', rr(0.9, 2.2)); continue; }
       if (b === BIOMES.BEACH) { addTree(jx, jz, 'palm', rr(0.8, 1.3)); continue; }
-      if (b === BIOMES.FOREST || h > 160) { addTree(jx, jz, R() < (h > 120 ? 0.85 : 0.5) ? 'pine' : 'round', rr(0.9, 1.7)); continue; }
+      if (b === BIOMES.FOREST || h > 160) { const q = R(); addTree(jx, jz, q < 0.16 ? 'bush' : R() < (h > 120 ? 0.85 : 0.5) ? 'pine' : 'round', q < 0.16 ? rr(0.9, 1.6) : rr(0.9, 1.7)); continue; }
       if (b === BIOMES.WETLAND) { addTree(jx, jz, R() < 0.6 ? 'bush' : 'round', rr(0.8, 1.3)); continue; }
-      addTree(jx, jz, R() < 0.75 ? 'round' : R() < 0.5 ? 'pine' : 'bush', rr(0.8, 1.4));
+      addTree(jx, jz, R() < 0.62 ? 'round' : R() < 0.35 ? 'pine' : 'bush', rr(0.8, 1.4));
     }
   // street trees in town: along pavements, between lamps
   for (const s of segs) {
@@ -546,6 +546,250 @@ function genNature() {
     const x = s.a.x + s.dx * s.len * t - s.dz * off * side, z = s.a.z + s.dz * s.len * t + s.dx * off * side;
     if (okForProp(x, z, s.w / 2 + SIDEWALK - 1.6)) addTree(x, z, 'round', rr(0.8, 1.0));
   }
+}
+
+// ---------------------------------------------------------------- shores
+// Soften the coastline: the 15 m grid gives the shore a zig-zag, steppy edge. Two relaxation
+// passes over nodes where land meets sea give a smoother contour and a gentler beach slope.
+// Nodes near roads and airfields are left alone (roads were fitted to the terrain).
+function shapeShores() {
+  const N = TN + 1;
+  const keep = new Uint8Array(N * N);
+  const mark = (x0, x1, z0, z1) => {
+    const i0 = clamp(Math.floor((x0 + HALF) / TS), 0, TN), i1 = clamp(Math.ceil((x1 + HALF) / TS), 0, TN);
+    const j0 = clamp(Math.floor((z0 + HALF) / TS), 0, TN), j1 = clamp(Math.ceil((z1 + HALF) / TS), 0, TN);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) keep[j * N + i] = 1;
+  };
+  for (const s of segs) {
+    const m = s.w / 2 + 24;
+    mark(Math.min(s.a.x, s.b.x) - m, Math.max(s.a.x, s.b.x) + m, Math.min(s.a.z, s.b.z) - m, Math.max(s.a.z, s.b.z) + m);
+  }
+  for (const ap of W.airports) for (const r of ap.runways) mark(Math.min(r.x0, r.x1) - 330, Math.max(r.x0, r.x1) + 330, Math.min(r.z0, r.z1) - 330, Math.max(r.z0, r.z1) + 330);
+  for (let it = 0; it < 2; it++) {
+    const H2 = H.slice();
+    for (let j = 1; j < TN; j++)
+      for (let i = 1; i < TN; i++) {
+        const o = j * N + i;
+        const h = H[o];
+        if (h < -7 || h > 6 || keep[o]) continue;
+        let lo = Infinity, hi = -Infinity, sum = 0;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) { const v = H[o + dj * N + di]; sum += v; if (v < lo) lo = v; if (v > hi) hi = v; }
+        if (lo > WATER || hi < WATER) continue; // only where land meets sea
+        H2[o] = h + (sum / 9 - h) * 0.65;
+      }
+    H.set(H2);
+  }
+}
+
+// ---------------------------------------------------------------- fences, hedges, gardens
+// Fence panels for flora.js: {x, y, z, rot, len, slope, type}. Every straight run also gets one
+// thin oriented-box collider (t:0, thin: true): cars and people bump into it, but it is never
+// treated as walkable ground or as a sight-line blocker.
+export const fences = [];
+export const FENCE = {
+  picket: { h: 1.0, t: 0.08 }, privacy: { h: 1.5, t: 0.08 }, hedge: { h: 1.35, t: 0.85 }, brick: { h: 0.9, t: 0.3 },
+  stone: { h: 0.85, t: 0.55 }, rail: { h: 1.15, t: 0.12 }, adobe: { h: 1.05, t: 0.35 },
+};
+const fGrid = new Map(); // 4 m cells -> panels, to drop near-duplicate parallel panels of neighbouring lots
+function fenceDup(x, z, ux, uz) {
+  const ci = Math.floor(x / 4), cj = Math.floor(z / 4);
+  for (let i = ci - 1; i <= ci + 1; i++)
+    for (let j = cj - 1; j <= cj + 1; j++) {
+      const l = fGrid.get(gk(i, j));
+      if (l) for (const p of l) if (Math.hypot(p.x - x, p.z - z) < 1.7 && Math.abs(p.ux * ux + p.uz * uz) > 0.85) return true;
+    }
+  return false;
+}
+function fenceOk(x, z, clear) {
+  const h = terrainHeight(x, z);
+  if (h < 2.6) return false; // never on beaches or in water
+  if (biomeAt(x, z) === BIOMES.BEACH) return false;
+  const nr = nearestRoad(x, z);
+  if (nr && nr.d < (nr.s.sidewalk ? SIDEWALK + clear : clear)) return false;
+  if (inAirfield(x, z, 20)) return false;
+  const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
+  if (l) for (const o of l) {
+    if (o.t === 0) {
+      if (o.thin || x < o.x0 - 0.7 || x > o.x1 + 0.7 || z < o.z0 - 0.7 || z > o.z1 + 0.7) continue;
+      const dx = x - o.cx, dz = z - o.cz;
+      if (Math.abs(dx * o.c - dz * o.s) < o.hx + 0.6 && Math.abs(dx * o.s + dz * o.c) < o.hz + 0.6) return false;
+    } else if (Math.hypot(x - o.x, z - o.z) < o.r + 0.5) return false;
+  }
+  return true;
+}
+function fenceCollider(run, type) {
+  const a = run[0], b = run[run.length - 1];
+  const ax = a.x - a.ux * a.len / 2, az = a.z - a.uz * a.len / 2, bx = b.x + b.ux * b.len / 2, bz = b.z + b.uz * b.len / 2;
+  const L = Math.hypot(bx - ax, bz - az);
+  if (L < 0.5) return;
+  const ux = (bx - ax) / L, uz = (bz - az) / L;
+  const F = FENCE[type];
+  const cx = (ax + bx) / 2, cz = (az + bz) / 2, hx = L / 2, hz = F.t / 2 + 0.05;
+  const rot = Math.atan2(-uz, ux);
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  const ex = Math.abs(c) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(c) * hz;
+  let y0 = Infinity, y1 = -Infinity;
+  for (const p of run) { y0 = Math.min(y0, p.y - Math.abs(p.slope) * p.len / 2); y1 = Math.max(y1, p.y + Math.abs(p.slope) * p.len / 2); }
+  const o = { t: 0, thin: true, kind: 'fence', cx, cz, hx, hz, rot, c, s: sn, x0: cx - ex, x1: cx + ex, z0: cz - ez, z1: cz + ez, y0: y0 - 0.5, y1: y1 + F.h };
+  regCollider(o, o.x0, o.x1, o.z0, o.z1);
+}
+// a straight fence from A to B, split into ~2 m panels; invalid panels break it into runs
+function addFenceRun(ax, az, bx, bz, type, clear = 1.2, panel = 2) {
+  const L = Math.hypot(bx - ax, bz - az);
+  if (L < 1.2) return 0;
+  const ux = (bx - ax) / L, uz = (bz - az) / L;
+  const n = Math.max(1, Math.round(L / panel)), len = L / n;
+  let run = [], added = 0;
+  const flush = () => { if (run.length) fenceCollider(run, type); run = []; };
+  for (let k = 0; k < n; k++) {
+    const x0 = ax + ux * len * k, z0 = az + uz * len * k, x1 = x0 + ux * len, z1 = z0 + uz * len;
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+    const h0 = terrainHeight(x0, z0), h1 = terrainHeight(x1, z1);
+    if (Math.abs(h1 - h0) > len * 0.45 || !fenceOk(x0, z0, clear) || !fenceOk(x1, z1, clear) || !fenceOk(mx, mz, clear) || fenceDup(mx, mz, ux, uz)) { flush(); continue; }
+    const p = { x: mx, z: mz, y: (h0 + h1) / 2, ux, uz, rot: Math.atan2(-uz, ux), len, slope: (h1 - h0) / len, type };
+    fences.push(p);
+    const key = gk(Math.floor(mx / 4), Math.floor(mz / 4));
+    let l = fGrid.get(key);
+    if (!l) fGrid.set(key, (l = []));
+    l.push(p);
+    run.push(p);
+    added++;
+  }
+  flush();
+  return added;
+}
+function genFences() {
+  const RF = mulberry32(777);
+  // residential lots: a front fence/hedge/wall behind the pavement with a gate gap, plus sides and back
+  for (const [cx, cz, hx, hz, rot, , style] of W.buildings) {
+    if (style === 0) continue;
+    const u = urbanAt(cx, cz);
+    if (style === 1 && u > 0.3) continue; // town centres: no garden fences
+    const r0 = RF(), r1 = RF(), r2 = RF(), r3 = RF();
+    if (r0 < (style === 1 ? 0.55 : 0.12)) continue; // open lots (most shops / KayKit lots stay open)
+    const b = biomeAt(cx, cz);
+    if (b === BIOMES.BEACH) continue;
+    const type = b === BIOMES.DESERT ? 'adobe' : r1 < 0.34 ? 'picket' : r1 < 0.6 ? 'hedge' : r1 < 0.8 ? 'brick' : 'privacy';
+    const fx = Math.sin(rot), fz = Math.cos(rot); // towards the street
+    const rx = Math.cos(rot), rz = -Math.sin(rot);
+    const pfx = cx + fx * hz, pfz = cz + fz * hz;
+    const nr = nearestRoad(pfx, pfz);
+    const W2 = hx + 1.3;
+    let front = hz + 0.5;
+    if (nr && nr.d < 14) {
+      const shift = nr.d - (nr.s.sidewalk ? SIDEWALK + 0.45 : 2.4);
+      if (shift > 0.5) {
+        const lx = pfx + fx * shift, lz = pfz + fz * shift, gap = r2 < 0.3 ? 1.6 : 0.8; // driveway or path
+        addFenceRun(lx - rx * W2, lz - rz * W2, lx - rx * gap, lz - rz * gap, type);
+        addFenceRun(lx + rx * gap, lz + rz * gap, lx + rx * W2, lz + rz * W2, type);
+        front = hz + shift;
+      }
+    }
+    const side = type === 'picket' || type === 'brick' ? (r3 < 0.5 ? 'privacy' : 'hedge') : type;
+    if (style === 1) continue; // KayKit lots: front only
+    const back = hz + 4;
+    for (const sg of [-1, 1]) addFenceRun(cx + rx * W2 * sg + fx * front, cz + rz * W2 * sg + fz * front, cx + rx * W2 * sg - fx * back, cz + rz * W2 * sg - fz * back, side);
+    addFenceRun(cx - rx * W2 - fx * back, cz - rz * W2 - fz * back, cx + rx * W2 - fx * back, cz + rz * W2 - fz * back, side);
+    // garden planting: shrubs beside the house, sometimes a small tree behind it
+    if (style === 2) {
+      const nb = Math.floor(RF() * 3);
+      for (let k = 0; k < nb; k++) {
+        const sg = RF() < 0.5 ? -1 : 1, t = RF() * 2 - 1;
+        const x = cx + rx * (hx + 0.9) * sg - fx * hz * t, z = cz + rz * (hx + 0.9) * sg - fz * hz * t;
+        if (okForProp(x, z, SIDEWALK + 1)) addTree(x, z, 'bush', rr(0.6, 1.0));
+      }
+      if (RF() < 0.35) {
+        const k = (RF() - 0.5) * hx;
+        const x = cx - fx * (hz + 2.2) + rx * k, z = cz - fz * (hz + 2.2) + rz * k;
+        if (okForProp(x, z, 6)) addTree(x, z, 'round', rr(0.6, 0.85));
+      }
+    }
+  }
+  // countryside: post-and-rail fences, dry stone walls and hedgerows along stretches of rural
+  // roads through open grassland, with field boundaries running away from the road
+  for (const road of roads) {
+    if (road.kind !== 'rural') continue;
+    const a = road.nodes[0], z = road.nodes[road.nodes.length - 1];
+    const L = road.segs.reduce((t, s) => t + s.len, 0);
+    for (const side of [1, -1]) {
+      let d = 0, acc = RF() * 120;
+      for (const s of road.segs) {
+        const d0 = d;
+        d += s.len;
+        if (s.bridge) continue;
+        if ((a.edges.length >= 3 && d0 < 25) || (z.edges.length >= 3 && d > L - 25)) continue;
+        const mx = (s.a.x + s.b.x) / 2, mz = (s.a.z + s.b.z) / 2;
+        if (biomeAt(mx, mz) !== BIOMES.GRASS || urbanAt(mx, mz) > 0.03) continue;
+        const n = noise2(mx * 0.0022 + side * 37.1, mz * 0.0022);
+        if (n < 0.08) continue;
+        const kind = n > 0.5 ? 'hedge' : noise2(mx * 0.0009 + 5, mz * 0.0009) > 0.15 ? 'stone' : 'rail';
+        const off = s.w / 2 + 3.2;
+        const nx = -s.dz * side, nz = s.dx * side;
+        addFenceRun(s.a.x + nx * off, s.a.z + nz * off, s.b.x + nx * off, s.b.z + nz * off, kind, 2.0, 2.5);
+        acc += s.len;
+        if (acc > 150 && n > 0.15) {
+          acc = 0;
+          const fl = 50 + RF() * 90;
+          addFenceRun(s.b.x + nx * (off + 0.6), s.b.z + nz * (off + 0.6), s.b.x + nx * (off + fl), s.b.z + nz * (off + fl), kind, 2.0, 2.5);
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- beaches
+// Town beaches get umbrellas with loungers and the odd lifeguard hut, facing the sea.
+// {type: 'umbrella'|'lounger'|'hut', x, y, z, rot, c}
+export const beachProps = [];
+function genBeach() {
+  const RB = mulberry32(9090);
+  const huts = [];
+  for (let x = -HALF + 40; x < HALF - 40; x += 20)
+    for (let z = -HALF + 40; z < HALF - 40; z += 20) {
+      const jx = x + (RB() - 0.5) * 14, jz = z + (RB() - 0.5) * 14;
+      const roll = RB();
+      const h = terrainHeight(jx, jz);
+      if (h < 1.0 || h > 2.6) continue;
+      const u = urbanAt(jx, jz);
+      if (u < 0.03 || u > 0.75) continue;
+      let sx = 0, sz = 0, n = 0;
+      for (let k = 0; k < 12; k++) {
+        const c = Math.cos((k / 12) * Math.PI * 2), sn = Math.sin((k / 12) * Math.PI * 2);
+        if (terrainHeight(jx + c * 28, jz + sn * 28) < -0.3) { sx += c; sz += sn; n++; }
+      }
+      if (n < 1 || n > 6) continue;
+      if (Math.abs(terrainHeight(jx + 3, jz) - terrainHeight(jx - 3, jz)) + Math.abs(terrainHeight(jx, jz + 3) - terrainHeight(jx, jz - 3)) > 1.6) continue;
+      if (inAirfield(jx, jz, 40) || !okForProp(jx, jz, 7)) continue;
+      const sl = Math.hypot(sx, sz) || 1;
+      sx /= sl; sz /= sl;
+      const rot = Math.atan2(sx, sz); // +z of the prop faces the sea
+      if (roll < 0.05 && !huts.some((p) => Math.hypot(p.x - jx, p.z - jz) < 350)) {
+        const hx = jx - sx * 4, hz = jz - sz * 4;
+        if (!okForProp(hx, hz, 7)) continue;
+        const y = terrainHeight(hx, hz);
+        beachProps.push({ type: 'hut', x: hx, y, z: hz, rot });
+        huts.push({ x: hx, z: hz });
+        const c = Math.cos(rot), s = Math.sin(rot);
+        // the cabin stands on stilts: a box above head height plus four thin legs
+        regCollider({ t: 0, kind: 'hut', thin: true, cx: hx, cz: hz, hx: 1.6, hz: 1.6, rot, c, s, x0: hx - 2.3, x1: hx + 2.3, z0: hz - 2.3, z1: hz + 2.3, y0: y + 2.2, y1: y + 5.2 }, hx - 2.3, hx + 2.3, hz - 2.3, hz + 2.3);
+        for (const [lx, lz] of [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]]) {
+          const px = hx + lx * c + lz * s, pz = hz - lx * s + lz * c;
+          regCollider({ t: 1, x: px, z: pz, r: 0.12, y0: y - 1, y1: y + 2.4 }, px - 1, px + 1, pz - 1, pz + 1);
+        }
+        continue;
+      }
+      if (roll > 0.42) continue;
+      const y = terrainHeight(jx, jz);
+      const col = Math.floor(RB() * 5);
+      beachProps.push({ type: 'umbrella', x: jx, y, z: jz, rot, c: col });
+      regCollider({ t: 1, x: jx, z: jz, r: 0.1, y0: y - 1, y1: y + 2.4 }, jx - 1, jx + 1, jz - 1, jz + 1);
+      const px = -sz, pz = sx; // along the beach
+      for (const sg of [-1, 1]) {
+        if (RB() < 0.2) continue;
+        const lx = jx + px * 1.15 * sg + sx * 0.6, lz = jz + pz * 1.15 * sg + sz * 0.6;
+        beachProps.push({ type: 'lounger', x: lx, y: terrainHeight(lx, lz), z: lz, rot: rot + (RB() - 0.5) * 0.3, c: col });
+      }
+    }
 }
 
 // ---------------------------------------------------------------- places
@@ -697,7 +941,7 @@ export function groundHeight(x, z, maxY = Infinity) {
   const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
   if (l)
     for (const o of l)
-      if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= maxY + 1.0 && o.y1 > h && inBox(o, x, z)) h = o.y1;
+      if (o.t === 0 && !o.thin && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= maxY + 1.0 && o.y1 > h && inBox(o, x, z)) h = o.y1;
   const rh = rampHeight(x, z);
   if (rh !== null && rh <= lim && rh > h) h = rh;
   return h;
@@ -758,7 +1002,7 @@ export function raycastWorld(ox, oy, oz, dx, dy, dz, maxD, step = 1.2) {
     const x = ox + dx * t, y = oy + dy * t, z = oz + dz * t;
     if (y < terrainHeight(x, z) - 0.1) return t;
     const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
-    if (l) for (const o of l) if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && y < o.y1 && y > o.y0 && inBox(o, x, z)) return t;
+    if (l) for (const o of l) if (o.t === 0 && !o.thin && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && y < o.y1 && y > o.y0 && inBox(o, x, z)) return t;
   }
   return Infinity;
 }
@@ -805,10 +1049,13 @@ export function generateWorldData() {
   carveRoadShoulders();
   regSegs();
   genAirports();
+  shapeShores();
   genBuildings();
   genLandmarks();
   genStreets();
   genNature();
+  genFences();
+  genBeach();
   // a few stunt ramps around the island
   for (const [px, py, rot] of [[250, 520, 0.6], [270, 540, 2.0], [230, 505, -0.5], [360, 520, 1.2], [600, 300, 0.2]]) {
     const p = streetSpot(px * TS - HALF, py * TS - HALF, false);

@@ -2,12 +2,14 @@
 import * as THREE from 'three';
 import { G, clamp, lerp, sstep, WATER } from './core.js';
 import {
-  H, TN, TS, HALF, segs, roads, junctions, buildings, trees, lamps, ramps, decor, signs, props, SIDEWALK, CURB,
+  H, TN, TS, HALF, segs, roads, junctions, buildings, trees, lamps, ramps, decor, signs, props, SIDEWALK, CURB, fences, beachProps,
   terrainHeight, biomeAt, urbanAt, BIOMES, AIRPORTS, generateWorldData,
 } from './terrain.js';
 import { noise2 } from './noise.js';
 import { mergeGeos } from './models.js';
 import { hasModel, instanceProp, updateTileVisibility, TILED } from './assets.js';
+import { terrainMaterial, terrainTextured, splatWeights, patchWaterShore, initGroundDetail, updateGroundDetail } from './ground.js';
+import { buildFlora, buildFences, buildBeachProps, updateFloraVisibility } from './flora.js';
 
 const M4 = new THREE.Matrix4();
 const Q = new THREE.Quaternion();
@@ -90,7 +92,8 @@ function terrainColor(x, z, h, slope, out) {
 }
 
 function buildTerrain(scene) {
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mat = terrainMaterial(); // splat-textured (ground.js), or plain vertex colours without textures
+  const tex = terrainTextured();
   const CH = 55; // cells per chunk (825 = 15 x 55)
   const NCH = Math.ceil(TN / CH);
   const hAt = (i, j) => H[clamp(j, 0, TN) * (TN + 1) + clamp(i, 0, TN)];
@@ -104,6 +107,7 @@ function buildTerrain(scene) {
       const pos = new Float32Array(n * n * 3);
       const nor = new Float32Array(n * n * 3);
       const col = new Float32Array(n * n * 3);
+      const sa = tex ? new Float32Array(n * n * 4) : null, sb = tex ? new Float32Array(n * n * 4) : null;
       let k = 0;
       for (let j = 0; j < n; j++)
         for (let i = 0; i < n; i++) {
@@ -115,6 +119,7 @@ function buildTerrain(scene) {
           V.set(-dx, 2 * TS, -dz).normalize();
           nor[k] = V.x; nor[k + 1] = V.y; nor[k + 2] = V.z;
           terrainColor(x, z, h, Math.hypot(dx, dz) / (2 * TS), C);
+          if (tex) splatWeights(x, z, h, Math.hypot(dx, dz) / (2 * TS), sa, sb, (k / 3) * 4);
           col[k] = C.r; col[k + 1] = C.g; col[k + 2] = C.b;
           k += 3;
         }
@@ -128,6 +133,7 @@ function buildTerrain(scene) {
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      if (tex) { geo.setAttribute('splatA', new THREE.BufferAttribute(sa, 4)); geo.setAttribute('splatB', new THREE.BufferAttribute(sb, 4)); }
       geo.setIndex(idx);
       geo.computeBoundingSphere();
       const m = new THREE.Mesh(geo, mat);
@@ -497,6 +503,8 @@ function buildModelTrees(scene, by) {
 }
 
 function buildTrees(scene) {
+  // textured card trees, bushes and rocks (flora.js); the primitives below are the fallback
+  if (buildFlora(scene, trees)) return;
   const by = { pine: [], round: [], cactus: [], rock: [], bush: [], palm: [] };
   for (const t of trees) by[t.type].push({ ...t, cx: t.x, cz: t.z });
   buildModelTrees(scene, by);
@@ -745,6 +753,7 @@ function buildWater(scene) {
   w.position.y = WATER;
   w.receiveShadow = true;
   G.waterMesh = w;
+  patchWaterShore(waterMat); // soft shoreline and foam (ground.js)
   scene.add(w);
 }
 
@@ -801,11 +810,13 @@ export function updateWorld(dt, focus) {
   G.cloudMat.opacity = 0.25 + day * 0.65;
   clouds.position.x = (G.time * 3) % 1000;
   G.uniforms.uTime.value = G.time;
+  updateGroundDetail(dt, G.camera.position); // grass and small plants around the camera
   tileT -= dt;
   if (tileT <= 0) {
     tileT = 0.4;
     const y = G.camera.position.y - terrainHeight(G.camera.position.x, G.camera.position.z);
     updateTileVisibility(G.camera.position, y > 150 ? 3200 : 1600);
+    updateFloraVisibility(G.camera.position, y > 150 ? 3200 : 1600);
   }
 }
 let tileT = 0;
@@ -819,6 +830,9 @@ export function buildWorld(scene) {
   buildRoads(scene);
   buildBuildings(scene);
   buildTrees(scene);
+  buildFences(scene, fences);
+  buildBeachProps(scene, beachProps);
+  initGroundDetail(scene);
   buildLamps(scene);
   buildProps(scene);
   buildAirports(scene);

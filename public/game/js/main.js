@@ -15,6 +15,7 @@ import { initHud, buildMapImage, updateHud, drawBigMap, help, showDeathScreen, s
 import { updateCamera, cycleZoom, snapCamera } from './camera.js';
 import { initMissions, updateMissions, abortMission } from './missions.js';
 import { loadModels } from './assets.js';
+import { loadGroundAssets } from './ground.js';
 import { loadSounds } from './audio.js';
 import { initNet, updateNet } from './net.js';
 
@@ -52,8 +53,10 @@ async function boot() {
 
   setLoading('Loading cars, people and buildings…', 5);
   const sounds = loadSounds();
+  const groundAssets = loadGroundAssets(); // terrain textures, foliage atlas, small plant models
   const world = loadWorldData().catch((e) => { setLoading('Could not load the map: ' + e.message); throw e; });
   await loadModels((f) => setLoading('Loading cars, people and buildings…', 5 + f * 30));
+  await groundAssets;
   await sounds;
   setLoading('Raising mountains, laying roads…', 40);
   await world;

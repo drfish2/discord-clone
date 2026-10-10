@@ -21,6 +21,17 @@ falls back to its built-in procedural models and synthesized sound.
 | mh_anims (82 animation clips, retargeted) | Quaternius, Universal Animation Library 1 & 2 | [quaternius.com](https://quaternius.com) | CC0 1.0 |
 | aerobatic_plane | Babylon.js team | [BabylonJS/Assets](https://github.com/BabylonJS/Assets) | CC BY 4.0 |
 
+| ph_fern_02, ph_shrub_sorrel_01, ph_shrub_03, ph_weed_plant_02, ph_rock_07, ph_dry_branches_medium_01 (small plants, rock, driftwood) | Poly Haven artists (Rob Tuytel, Rico Cilliers, Greg Zaal, Jenelle van Heerden and others) | [polyhaven.com](https://polyhaven.com/models) (decimated, normal maps dropped, 512 px textures; `tools/ground/decimate.py`) | CC0 1.0 |
+
+## Textures (`textures/ground/`)
+
+| Files | Source | License |
+| --- | --- | --- |
+| t_grass (sparse_grass), t_meadow (leafy_grass), t_forest (forest_leaves_02), t_dirt (dry_ground_rocks), t_sand (sand_01), t_wetsand (damp_beach_sand), t_rock (rock_face), t_mud (mud_forest), t_snow (snow_02), bark_oak (bark_brown_02), bark_pine (pine_bark), wood_white (white_planks_clean), wood_weathered (weathered_planks), wall_brick (red_brick_03), wall_stone (stacked_stone_wall) | [Poly Haven](https://polyhaven.com/textures), diffuse maps re-encoded at 1K / 512 px | CC0 1.0 |
+| foliage_atlas.webp (leaf clusters, needle branches, reed and dune grass tufts) | Composed by `tools/ground/compose.py` from [ambientCG](https://ambientcg.com) LeafSet024, Foliage001, Foliage002, Foliage004, Foliage007 | CC0 1.0 |
+
+Trees, bushes, hedges, fences and beach furniture are built in code (`js/flora.js`) from these textures.
+
 ## Sound effects (`sfx/`)
 
 | Files | Source | License |
