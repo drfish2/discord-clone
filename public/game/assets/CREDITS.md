@@ -17,6 +17,8 @@ falls back to its built-in procedural models and synthesized sound.
 | bike (bicycle) | hugodutra ([Blendswap #27768](https://blendswap.com/blend/27768)) | pmndrs/market-assets | CC0 1.0 |
 | motorcycle | Kenney | [KenneyNL/Starter-Kit-Racing](https://github.com/KenneyNL/Starter-Kit-Racing) | CC0 1.0 |
 | kk_bld_A–H, kk_streetlight, kk_trafficlight_A, kk_bench, kk_firehydrant, kk_dumpster, kk_trash_A | Kay Lousberg ([KayKit](https://kaylousberg.com)) | [KayKit City Builder Bits](https://github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0) | CC0 1.0 |
+| mh_player, mh_ped_*, mh_cop, mh_gang (realistic people) | Built with [MakeHuman](http://www.makehumancommunity.org) / MPFB2 | MakeHuman 1.1 assets | CC0 1.0 |
+| mh_anims (82 animation clips, retargeted) | Quaternius, Universal Animation Library 1 & 2 | [quaternius.com](https://quaternius.com) | CC0 1.0 |
 | aerobatic_plane | Babylon.js team | [BabylonJS/Assets](https://github.com/BabylonJS/Assets) | CC BY 4.0 |
 
 ## Sound effects (`sfx/`)
