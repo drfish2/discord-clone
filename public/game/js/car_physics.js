@@ -87,6 +87,10 @@ const BASE = {
   bodyFriction: 0.45, bodyRestitution: 0.15,
   frontGrip: 1.0, // front tyre grip multiplier (<1 = built-in understeer)
   wheelProbe: true, // 2 extra ground samples per wheel for kerbs/steps
+  wheelProbeClimb: 0.35, // m: probe samples read at most this much above the hub's own sample.
+  // Kerbs (~0.15 m) and slabs (~0.3 m) still climb as designed; taller surfaces (road
+  // edges in cuts, junction cross-roads) used to be grabbed by the probe and fired the
+  // bump stop frame after frame — launching the car metres into the air.
   airPitchDamp: 0.6, // 1/s, pitch-rate damping while airborne (rider/driver balance assist)
   gravity: GRAVITY,
 };
@@ -441,11 +445,12 @@ export class RaycastVehicle {
         const a = p.wheelRadius * 0.7, drop = p.wheelRadius * 0.286;
         const bx = mx - upX * reach * 0.7, bz = mz - upZ * reach * 0.7;
         const h0 = g0.h;
+        const climb = h0 + (p.wheelProbeClimb ?? 0.35);
         let hm = h0;
         for (const sgn of [1, -1]) {
           const r = ground(bx + fwX * a * sgn, bz + fwZ * a * sgn, my);
           const hh = (typeof r === 'number' ? r : r.h) - drop;
-          if (hh > hm) hm = hh;
+          if (hh > hm) hm = Math.min(hh, climb);
         }
         g0.h = hm;
       }
