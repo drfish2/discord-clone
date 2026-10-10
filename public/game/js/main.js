@@ -186,7 +186,7 @@ function openMap() {
   G.state = 'map';
   pauseRadio();
   $('mapview').hidden = false;
-  drawBigMap();
+  drawBigMap(true);
 }
 function closeMap() {
   $('mapview').hidden = true;

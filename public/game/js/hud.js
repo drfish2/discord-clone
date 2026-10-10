@@ -107,6 +107,7 @@ export function initHud() {
   sctx = speedo.getContext('2d');
   bigMap = $('bigmap');
   bctx = bigMap.getContext('2d');
+  initMapControls();
 }
 
 // ---------------------------------------------------------------- notifications
@@ -373,17 +374,49 @@ function drawSpeedo() {
 }
 
 // ---------------------------------------------------------------- big map
-export function drawBigMap() {
+// full map view: wheel to zoom (towards the cursor), drag to pan
+const MV = { zoom: 1, cx: 0, cz: 0, drag: null };
+function mapScale() {
+  return Math.min(bigMap.width, bigMap.height) * 0.96 * MV.zoom; // px for the whole island
+}
+function initMapControls() {
+  bigMap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = bigMap.getBoundingClientRect();
+    const px = (e.clientX - r.left) * devicePixelRatio, py = (e.clientY - r.top) * devicePixelRatio;
+    const sc = mapScale();
+    const wx = MV.cx + ((px - bigMap.width / 2) / sc) * HALF * 2, wz = MV.cz + ((py - bigMap.height / 2) / sc) * HALF * 2;
+    MV.zoom = clamp(MV.zoom * (e.deltaY < 0 ? 1.25 : 0.8), 1, 10);
+    const sc2 = mapScale();
+    MV.cx = wx - ((px - bigMap.width / 2) / sc2) * HALF * 2;
+    MV.cz = wz - ((py - bigMap.height / 2) / sc2) * HALF * 2;
+    drawBigMap();
+  }, { passive: false });
+  bigMap.addEventListener('mousedown', (e) => { MV.drag = { x: e.clientX, y: e.clientY, cx: MV.cx, cz: MV.cz }; });
+  addEventListener('mouseup', () => { MV.drag = null; });
+  addEventListener('mousemove', (e) => {
+    if (!MV.drag || bigMap.parentElement.hidden) return;
+    const k = (HALF * 2 * devicePixelRatio) / mapScale();
+    MV.cx = MV.drag.cx - (e.clientX - MV.drag.x) * k;
+    MV.cz = MV.drag.cz - (e.clientY - MV.drag.y) * k;
+    drawBigMap();
+  });
+}
+
+export function drawBigMap(reset = false) {
   const P = G.player;
   const pp = P.vehicle ? P.vehicle.pos : P.pos;
   const W = (bigMap.width = bigMap.clientWidth * devicePixelRatio);
   const Hh = (bigMap.height = bigMap.clientHeight * devicePixelRatio);
+  if (reset) { MV.zoom = 2.5; MV.cx = pp.x; MV.cz = pp.z; }
   const g = bctx;
   g.fillStyle = '#244a5e';
   g.fillRect(0, 0, W, Hh);
-  const sz = Math.min(W, Hh) * 0.96;
-  const ox = (W - sz) / 2, oy = (Hh - sz) / 2;
+  const sz = mapScale();
+  const ox = W / 2 - ((MV.cx + HALF) / (HALF * 2)) * sz, oy = Hh / 2 - ((MV.cz + HALF) / (HALF * 2)) * sz;
+  g.imageSmoothingEnabled = MV.zoom < 3;
   g.drawImage(mapCanvas, ox, oy, sz, sz);
+  g.imageSmoothingEnabled = true;
   const tp = (x, z) => [ox + ((x + HALF) / (HALF * 2)) * sz, oy + ((z + HALF) / (HALF * 2)) * sz];
   g.font = `${Math.round(12 * devicePixelRatio)}px "Chakra Petch", system-ui, sans-serif`;
   g.textAlign = 'center';
