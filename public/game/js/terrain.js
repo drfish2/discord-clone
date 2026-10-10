@@ -192,6 +192,25 @@ export function roadAt(x, z, maxY = Infinity) {
   if (h === null || (hp !== null && hp > h + 1)) return hp;
   return h;
 }
+// Verge behind a raised pavement. Pavements on embankments ended in a 0.4-0.6 m ledge
+// (the 15 m terrain grid can't model the slope), so cars dropped off the back or slammed
+// into it from the lots behind. Within VERGE m of a pavement's outer edge the ground slopes
+// down 1:2 from the pavement to the terrain. Returns that height, or null.
+const VERGE = 1.4;
+function vergeAt(x, z, maxY) {
+  const l = segsAt(x, z);
+  if (!l) return null;
+  let h = null;
+  for (const s of l) {
+    if (!s.sidewalk) continue;
+    proj(s, x, z);
+    const out = RP.d - (s.w / 2 + SIDEWALK);
+    if (out < 0 || out > VERGE) continue;
+    const y = RP.h + CURB - out * 0.5;
+    if (y <= maxY && (h === null || y > h)) h = y;
+  }
+  return h;
+}
 export function onPavement(x, z) {
   const l = segsAt(x, z);
   if (!l) return false;
@@ -652,16 +671,18 @@ function carveRoadShoulders() {
         const roadH = s.a.h + (s.b.h - s.a.h) * (t / s.len);
         const o = j * (TN + 1) + i;
         const c = claim.get(o);
-        if (!c) claim.set(o, { edge, roadH, surfH: edge <= 0.4 ? roadH : undefined });
+        if (!c) claim.set(o, { edge, roadH, sw: s.sidewalk, surfH: edge <= 0.4 ? roadH : undefined });
         else {
-          if (edge < c.edge) { c.edge = edge; c.roadH = roadH; }
+          if (edge < c.edge) { c.edge = edge; c.roadH = roadH; c.sw = s.sidewalk; }
           if (edge <= 0.4 && (c.surfH === undefined || roadH < c.surfH)) c.surfH = roadH;
         }
       }
   }
   for (const [o, c] of claim) {
     const k = c.edge <= SHOULDER ? 0 : sstep(0, band, c.edge - SHOULDER);
-    let allowed = c.roadH - floor + (H[o] - (c.roadH - floor)) * k;
+    // behind a raised pavement the verge sits level with it, not 0.45 m below its back edge
+    const base = c.sw && c.edge > 0.4 ? c.roadH + CURB - 0.05 : c.roadH - floor;
+    let allowed = base + (H[o] - base) * k;
     if (c.surfH !== undefined && c.surfH - floor < allowed) allowed = c.surfH - floor;
     if (allowed < H[o]) H[o] = allowed;
   }
@@ -683,7 +704,9 @@ function rampHeight(x, z) {
 }
 
 // Ground height at (x,z). Surfaces higher than maxY+step are ignored (so things can pass under bridges).
-export function groundHeight(x, z, maxY = Infinity) {
+// boxMax: highest building/plinth top that counts as ground (default maxY + 1 m, a person's
+// step); vehicles pass a much lower one so planters and low walls are walls, not ramps.
+export function groundHeight(x, z, maxY = Infinity, boxMax = maxY + 1.0) {
   const lim = maxY + 1.6;
   // road-first: where a road (or pavement) covers this point, the road surface IS the
   // ground — the 15 m terrain grid is imperfectly carved under the roads' own height
@@ -692,12 +715,16 @@ export function groundHeight(x, z, maxY = Infinity) {
   // maxY: roadAt filters it out and returns null there.
   const r = roadAt(x, z, lim);
   let h = r !== null ? r : terrainHeight(x, z);
+  if (r === null) {
+    const vh = vergeAt(x, z, lim);
+    if (vh !== null && vh > h) h = vh;
+  }
   const ah = airportHeight(x, z);
   if (ah !== null && ah > h && ah <= lim) h = ah;
   const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
   if (l)
     for (const o of l)
-      if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= maxY + 1.0 && o.y1 > h && inBox(o, x, z)) h = o.y1;
+      if (o.t === 0 && x > o.x0 && x < o.x1 && z > o.z0 && z < o.z1 && o.y1 <= boxMax && o.y1 > h && inBox(o, x, z)) h = o.y1;
   const rh = rampHeight(x, z);
   if (rh !== null && rh <= lim && rh > h) h = rh;
   return h;
