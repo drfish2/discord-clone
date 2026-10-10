@@ -1,6 +1,6 @@
 // Road traffic AI, parked cars, fixed vehicle spawns, and road pathfinding.
 import { G, clamp, rand, pick, angWrap, emit, on, dist2 } from './core.js';
-import { nodes, segs, AIRPORT, AIRPORTS, SPECIAL, isWater, urbanAt, streetSpot, waterSpot, px2w, terrainHeight } from './terrain.js';
+import { nodes, segs, segsAt, AIRPORT, AIRPORTS, SPECIAL, isWater, urbanAt, streetSpot, waterSpot, px2w, terrainHeight } from './terrain.js';
 import { Vehicle, spawnVehicle, CAR_COLORS } from './vehicles.js';
 import { sfx } from './audio.js';
 
@@ -9,6 +9,15 @@ const LANE = (w) => w / 4;
 // ---------------------------------------------------------------- pathfinding
 export function nearestNode(x, z, maxD = Infinity) {
   let best = null, bd = maxD;
+  // look in the nearby road grid cells first
+  for (const [ox, oz] of [[0, 0], [64, 0], [-64, 0], [0, 64], [0, -64]]) {
+    const l = segsAt(x + ox, z + oz);
+    if (l) for (const sg of l) for (const n of [sg.a, sg.b]) {
+      const d = Math.abs(n.x - x) + Math.abs(n.z - z);
+      if (d < bd) { bd = d; best = n; }
+    }
+  }
+  if (best) return best;
   for (const n of nodes) {
     if (!n.edges.length) continue;
     const d = Math.abs(n.x - x) + Math.abs(n.z - z);
@@ -205,7 +214,11 @@ function inView(x, z) {
 export function spawnOnRoad(type, minD, maxD, mode = 'traffic', preferHidden = true) {
   const pp = playerPos();
   for (let tries = 0; tries < 25; tries++) {
-    const s = segs[Math.floor(Math.random() * segs.length)];
+    // a random road segment in the ring around the player
+    const ang = Math.random() * Math.PI * 2, rr2 = minD + Math.random() * (maxD - minD);
+    const l = segsAt(pp.x + Math.cos(ang) * rr2, pp.z + Math.sin(ang) * rr2);
+    if (!l || !l.length) continue;
+    const s = l[Math.floor(Math.random() * l.length)];
     const t = Math.random();
     const x = s.a.x + (s.b.x - s.a.x) * t, z = s.a.z + (s.b.z - s.a.z) * t;
     const d = Math.hypot(x - pp.x, z - pp.z);

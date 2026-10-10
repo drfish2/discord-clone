@@ -350,6 +350,18 @@ function drawSpeedo() {
   g.fillRect(R - 30, R + 36, 60, 5);
   g.fillStyle = hp > 0.5 ? '#4fd1a5' : hp > 0.25 ? '#f2c14e' : '#ef5350';
   g.fillRect(R - 30, R + 36, 60 * hp, 5);
+  if (v.phys) {
+    // gear and a small rev bar from the simulated drivetrain
+    const T = v.phys.telemetry, p = v.phys.p;
+    const r = clamp((T.rpm - p.idleRPM) / (p.redline - p.idleRPM), 0, 1);
+    g.fillStyle = 'rgba(255,255,255,0.15)';
+    g.fillRect(R - 30, R - 30, 60, 4);
+    g.fillStyle = r > 0.88 ? '#ef5350' : '#7fd3ff';
+    g.fillRect(R - 30, R - 30, 60 * r, 4);
+    g.fillStyle = '#f2c14e';
+    g.font = '700 13px "Chakra Petch", system-ui, sans-serif';
+    g.fillText(T.gear < 0 ? 'R' : T.kmh < 1 && Math.abs(v.input.throttle) < 0.1 ? 'N' : String(T.gear), R, R - 36);
+  }
   if (v.kind === 'plane' || v.kind === 'heli') {
     g.fillStyle = '#7fd3ff';
     g.font = '600 11px "Chakra Petch", system-ui, sans-serif';

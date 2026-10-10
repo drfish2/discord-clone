@@ -2,6 +2,7 @@
 // footsteps and ambience, an in-car radio with open-licensed music, and the
 // original WebAudio synthesis as a fallback (and for the police siren).
 import { G, clamp, emit } from './core.js';
+import { urbanAt } from './terrain.js';
 
 let ctx = null, master, noiseBuf;
 let eng, siren, rotor, wind;
@@ -329,11 +330,18 @@ export function updateAudio(dt) {
   if (v && !v.dead && G.state === 'play') {
     const sp = v.speedAbs;
     if (v.kind === 'car' || v.kind === 'bike' || v.kind === 'boat') {
-      const ratio = clamp(Math.abs(v.fwdSpeed) / v.spec.speed, 0, 1);
-      const gears = v.kind === 'bike' ? 6 : 5;
-      const g = Math.min(gears - 1, Math.floor(ratio * gears));
-      const rpm = ratio * gears - g;
-      eFreq = (v.kind === 'bike' ? 70 : 45) + rpm * (v.kind === 'bike' ? 120 : 80) + g * 6 + Math.abs(v.input.throttle) * 8;
+      if (v.phys) {
+        // the simulated engine: real rpm through the gearbox
+        const T = v.phys.telemetry, p = v.phys.p;
+        const r = clamp((T.rpm - p.idleRPM) / (p.redline - p.idleRPM), 0, 1.1);
+        eFreq = (v.kind === 'bike' ? 70 : 45) + r * (v.kind === 'bike' ? 140 : 95) + Math.abs(v.input.throttle) * 6;
+      } else {
+        const ratio = clamp(Math.abs(v.fwdSpeed) / v.spec.speed, 0, 1);
+        const gears = v.kind === 'bike' ? 6 : 5;
+        const g = Math.min(gears - 1, Math.floor(ratio * gears));
+        const rpm = ratio * gears - g;
+        eFreq = (v.kind === 'bike' ? 70 : 45) + rpm * (v.kind === 'bike' ? 120 : 80) + g * 6 + Math.abs(v.input.throttle) * 8;
+      }
       eGain = 0.05 + Math.abs(v.input.throttle) * 0.05;
       if (v.kind === 'boat') eFreq *= 0.8;
     } else if (v.kind === 'plane') {
@@ -373,7 +381,7 @@ export function updateAudio(dt) {
   // city ambience on foot or at low speed
   if (ambLoop) {
     const pp = P ? (v ? v.pos : P.pos) : null;
-    const inCity = pp && Math.abs(pp.x) < 900 && Math.abs(pp.z) < 900;
+    const inCity = pp && urbanAt(pp.x, pp.z) > 0.15;
     loopSet(ambLoop, 'ambience', G.state === 'play' && inCity && (!v || v.speedAbs < 8) ? 0.22 : 0, 1);
   }
   // footsteps
