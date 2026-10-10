@@ -171,18 +171,25 @@ export function nearestRoad(x, z) {
   NR.d = bd; NR.h = bh; NR.s = bs; NR.side = side;
   return NR;
 }
-// road (or pavement) surface height at (x,z), ignoring surfaces above maxY; null if none
+// road (or pavement) surface height at (x,z), ignoring surfaces above maxY; null if none.
+// A carriageway beats a pavement on the same level: at junctions and on dense streets a neighbouring
+// segment's pavement band (road + CURB) overlaps this segment's carriageway, and taking
+// the plain max painted kerbs across the road — a 0.15–0.4 m sawtooth every few metres.
 export function roadAt(x, z, maxY = Infinity) {
   const l = segsAt(x, z);
   if (!l) return null;
-  let h = null;
+  let h = null, hp = null;
   for (const s of l) {
     proj(s, x, z);
-    let y = null;
-    if (RP.d < s.w / 2 + 0.3) y = RP.h;
-    else if (s.sidewalk && RP.d < s.w / 2 + SIDEWALK) y = RP.h + CURB;
-    if (y !== null && y <= maxY && (h === null || y > h)) h = y;
+    if (RP.d < s.w / 2 + 0.3) {
+      if (RP.h <= maxY && (h === null || RP.h > h)) h = RP.h;
+    } else if (s.sidewalk && RP.d < s.w / 2 + SIDEWALK) {
+      const y = RP.h + CURB;
+      if (y <= maxY && (hp === null || y > hp)) hp = y;
+    }
   }
+  // a pavement well above the carriageway is a different level (bridge over a road)
+  if (h === null || (hp !== null && hp > h + 1)) return hp;
   return h;
 }
 export function onPavement(x, z) {
@@ -584,6 +591,82 @@ export function waterSpot(x, z, depth = 2.5) {
 }
 
 // ---------------------------------------------------------------- queries
+// Fit road heights to the airfields. tools/mapgen/compile.py flattens the terrain
+// around each runway AFTER it has sampled the road profiles, so roads near airports
+// were left up to ~4 m under the plateau (and under the apron slab). With road-first
+// groundHeight() a car there drove in a trench beneath the apron, and the moment its
+// struts got within 1.6 m of the slab the ground snapped up onto it — a 20 m/s launch.
+// Apply the compiler's own flatten blend to the road nodes so they follow the plateau
+// exactly like the terrain does. Bridge nodes keep their deck height.
+function fitRoadsToAirports() {
+  const onBridge = new Set();
+  for (const s of segs) if (s.bridge) { onBridge.add(s.a); onBridge.add(s.b); }
+  for (const ap of W.airports) {
+    for (const r of ap.runways) {
+      const L = Math.hypot(r.x1 - r.x0, r.z1 - r.z0), dx = (r.x1 - r.x0) / L, dz = (r.z1 - r.z0) / L;
+      for (const n of nodes) {
+        if (onBridge.has(n)) continue;
+        const px = n.x - r.x0, pz = n.z - r.z0;
+        const along = px * dx + pz * dz, side = -px * dz + pz * dx;
+        const da = Math.max(-along, along - L, 0), ds = Math.max(Math.abs(side) - 120, 0);
+        let w = clamp(1 - (Math.hypot(da, ds) - 30) / 160, 0, 1);
+        if (w <= 0) continue;
+        w = w * w * (3 - 2 * w);
+        n.h = n.h * (1 - w) + ap.h * w;
+      }
+    }
+  }
+}
+
+// Pull the terrain down around roads. The compiled heightfield blends the 15 m
+// grid with the roads' own height profile imperfectly: in ~1.7 % of road-surface
+// samples the terrain pokes up through the road (up to ~5 m — the "bumpy /
+// jumping car" bug), and with road-first groundHeight() those spots also became
+// vertical cliffs at the verge. Terrain nodes within w/2 + SHOULDER of a road are
+// held just under the road surface; beyond that the natural height blends back
+// in over ~2 grid cells, so cuttings and embankments keep a graded shoulder.
+// Nodes claimed by several roads (junctions, parallel streets) follow the
+// NEAREST one — taking the lowest would dig trenches beside higher roads.
+// Only ever lowers the terrain. Runs once, at load time.
+const SHOULDER = 4; // graded shoulder beyond the road edge (m)
+function carveRoadShoulders() {
+  const floor = 0.3; // terrain kept this far below the road surface
+  const band = TS * 2; // blend width back to natural terrain
+  const reach = SHOULDER + band;
+  const claim = new Map(); // node index -> { edge, roadH, surfH } of its nearest road
+  // surfH: lowest road whose SURFACE covers the node (edge <= 0.4) — the node must
+  // never sit above any road rendered there, even if a nearer road claims it.
+  for (const s of segs) {
+    const r1 = s.w / 2 + reach;
+    const i0 = clamp(Math.floor((Math.min(s.a.x, s.b.x) - r1 + HALF) / TS), 0, TN);
+    const i1 = clamp(Math.ceil((Math.max(s.a.x, s.b.x) + r1 + HALF) / TS), 0, TN);
+    const j0 = clamp(Math.floor((Math.min(s.a.z, s.b.z) - r1 + HALF) / TS), 0, TN);
+    const j1 = clamp(Math.ceil((Math.max(s.a.z, s.b.z) + r1 + HALF) / TS), 0, TN);
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const px = -HALF + i * TS - s.a.x, pz = -HALF + j * TS - s.a.z;
+        let t = px * s.dx + pz * s.dz;
+        t = clamp(t, 0, s.len);
+        const edge = Math.hypot(px - s.dx * t, pz - s.dz * t) - s.w / 2;
+        if (edge > reach) continue;
+        const roadH = s.a.h + (s.b.h - s.a.h) * (t / s.len);
+        const o = j * (TN + 1) + i;
+        const c = claim.get(o);
+        if (!c) claim.set(o, { edge, roadH, surfH: edge <= 0.4 ? roadH : undefined });
+        else {
+          if (edge < c.edge) { c.edge = edge; c.roadH = roadH; }
+          if (edge <= 0.4 && (c.surfH === undefined || roadH < c.surfH)) c.surfH = roadH;
+        }
+      }
+  }
+  for (const [o, c] of claim) {
+    const k = c.edge <= SHOULDER ? 0 : sstep(0, band, c.edge - SHOULDER);
+    let allowed = c.roadH - floor + (H[o] - (c.roadH - floor)) * k;
+    if (c.surfH !== undefined && c.surfH - floor < allowed) allowed = c.surfH - floor;
+    if (allowed < H[o]) H[o] = allowed;
+  }
+}
+
 function rampHeight(x, z) {
   let h = null;
   for (const r of ramps) {
@@ -601,10 +684,14 @@ function rampHeight(x, z) {
 
 // Ground height at (x,z). Surfaces higher than maxY+step are ignored (so things can pass under bridges).
 export function groundHeight(x, z, maxY = Infinity) {
-  let h = terrainHeight(x, z);
   const lim = maxY + 1.6;
+  // road-first: where a road (or pavement) covers this point, the road surface IS the
+  // ground — the 15 m terrain grid is imperfectly carved under the roads' own height
+  // profile and used to poke up through it (the "bumpy / jumping car" bug). Terrain is
+  // only the fallback when no road qualifies, e.g. under a bridge whose deck is above
+  // maxY: roadAt filters it out and returns null there.
   const r = roadAt(x, z, lim);
-  if (r !== null && r > h) h = r;
+  let h = r !== null ? r : terrainHeight(x, z);
   const ah = airportHeight(x, z);
   if (ah !== null && ah > h && ah <= lim) h = ah;
   const l = bGrid.get(gk(Math.floor(x / BG), Math.floor(z / BG)));
@@ -714,6 +801,8 @@ export function generateWorldData() {
   DISTRICTS = W.districts;
   REGIONS = W.regions;
   buildRoads();
+  fitRoadsToAirports();
+  carveRoadShoulders();
   regSegs();
   genAirports();
   genBuildings();
