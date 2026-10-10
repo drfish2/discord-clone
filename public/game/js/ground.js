@@ -9,6 +9,7 @@ import {
   H, TN, TS, HALF, BIOMES, biomeAt, urbanAt, terrainHeight, nearestRoad, buildingsNear, inAirfield,
 } from './terrain.js';
 import { noise2, mulberry32 } from './noise.js';
+import { inlineData } from './assets.js'; // CSP-safe embedded buffers/images (artifact host)
 
 // low | med (default) | high
 export function quality() {
@@ -79,6 +80,7 @@ export async function loadGroundAssets() {
   jobs.push(loadTex(tl, TEX + 'foliage_atlas.webp', aniso).then((t) => { if (t) GTEX.foliage = t; }));
   const ext = (typeof window !== 'undefined' && window.CC_MODEL_EXT) || '.glb';
   const gl = new GLTFLoader();
+  gl.register(inlineData);
   for (const f of PLANT_FILES) {
     jobs.push(gl.loadAsync(MOD + f + ext).then((g) => { PLANTS[f.replace(/^ph_/, '')] = plantVariants(g); })
       .catch(() => console.warn('plant model missing:', f)));

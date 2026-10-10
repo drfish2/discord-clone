@@ -68,7 +68,7 @@ function dataBytes(uri) {
   for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
   return u;
 }
-function inlineData(parser) {
+export function inlineData(parser) {
   const loadBuffer = parser.loadBuffer.bind(parser);
   parser.loadBuffer = (i) => {
     const uri = parser.json.buffers[i].uri;
