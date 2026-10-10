@@ -193,9 +193,12 @@ function updateGps(dt, pp) {
     // drop the part of the route already driven
     const { i } = distToPath(GPS.path, pp.x, pp.z);
     if (i > 0) GPS.path = GPS.path.slice(i);
-    let d = 0;
-    for (let k = 0; k < GPS.path.length - 1; k++) d += Math.hypot(GPS.path[k + 1].x - GPS.path[k].x, GPS.path[k + 1].z - GPS.path[k].z);
-    GPS.dist = d + Math.hypot(t.x - GPS.path[GPS.path.length - 1].x, t.z - GPS.path[GPS.path.length - 1].z);
+    // path[0] is the start of the segment the player is on (already passed), so measure
+    // from the player to path[1]: the readout then falls smoothly instead of in node steps
+    const P_ = GPS.path, n0 = P_.length > 1 ? 1 : 0;
+    let d = Math.hypot(P_[n0].x - pp.x, P_[n0].z - pp.z);
+    for (let k = n0; k < P_.length - 1; k++) d += Math.hypot(P_[k + 1].x - P_[k].x, P_[k + 1].z - P_[k].z);
+    GPS.dist = d + Math.hypot(t.x - P_[P_.length - 1].x, t.z - P_[P_.length - 1].z);
   }
 }
 
@@ -307,7 +310,9 @@ function drawRadar() {
     g.globalAlpha = 0.9;
     g.beginPath();
     g.moveTo(R, R);
-    for (const n of GPS.path) {
+    // skip path[0]: it is behind the player (start of the current segment)
+    for (let k = GPS.path.length > 1 ? 1 : 0; k < GPS.path.length; k++) {
+      const n = GPS.path[k];
       const [bx, by] = rot(n.x, n.z);
       g.lineTo(R + bx, R + by);
       if (bx * bx + by * by > R * R * 4) break;
@@ -538,7 +543,7 @@ export function drawBigMap(reset = false) {
     g.beginPath();
     const [a0, b0] = tp(pp.x, pp.z);
     g.moveTo(a0, b0);
-    for (const n of GPS.path) { const [a, b] = tp(n.x, n.z); g.lineTo(a, b); }
+    for (let k = GPS.path.length > 1 ? 1 : 0; k < GPS.path.length; k++) { const [a, b] = tp(GPS.path[k].x, GPS.path[k].z); g.lineTo(a, b); }
     if (GPS.target) { const [a, b] = tp(GPS.target.x, GPS.target.z); g.lineTo(a, b); }
     g.stroke();
   }
