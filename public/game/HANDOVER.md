@@ -72,19 +72,11 @@ State of the GTA-style browser game as of 10 Oct 2026, and what to do next.
      - (c) Optionally lift the road mesh (`world.js`, the 0.06 offset in `stripRange`) or render it with a polygon offset.
    - Also check the junction patches and the curb step (`CURB` = 0.15 m pavement) against `car_physics.js`'s `wheelProbe`.
    - Test with the harness script `s_bump.js` (below). Note that its `maxStep1m` figure is inflated: it sampled `groundHeight` with `maxY = 50`, which counts roofs.
-2. **Car models are still Kenney low-poly.** Research found usable realistic models (licences checked):
-   - Webots Tesla Model 3 (CC-BY 4.0, 12.6k tris, wheels separate), also for the taxi and police recolours;
-   - the OSRF Gazebo set (CC-BY 3.0): hatchback, SUV, Prius, pickup, ambulance, bus, fire truck, Cessna;
-   - Webots Mercedes Sprinter (Apache-2.0);
-   - Porsche 911 by Karol Miklas (CC-BY-SA 4.0);
-   - Khronos Car Concept (CC-BY 4.0).
-   - **All of those downloads lived in the session's temporary scratch folder and will be gone.** Re-fetch them:
-     - Webots: `raw.githubusercontent.com/cyberbotics/webots/<commit>/projects/vehicles/protos/tesla|mercedes_benz/`
-     - Gazebo: `raw.githubusercontent.com/osrf/gazebo_models/<commit>/<model>/`
-     - Porsche: pmndrs/examples `building-live-envmaps/src/911-transformed.glb`
-     - Car Concept: KhronosGroup/glTF-Sample-Assets `Models/CarConcept`
-   - Remove logos and give the cars fictional names.
-   - Final GLBs must not use meshopt, Draco or KTX2 (see the hosting notes).
+2. **Realistic cars are in (branch `feat/realistic-cars`).** 12 GLBs in `assets/models/` (credits in `assets/CREDITS.md`), built by `tools/models/` (pipeline at the top of `rig.mjs`; sources and licences in `~/.zcode/workspace/default/crimson-coast/car-models/`).
+   - Mapping is `VEHICLE_MODELS[type].real` in `assets.js`; the variant comes from the vehicle colour. Police and taxi use the Volt 3 repainted (light bar / roof sign added in `models.js`). Box truck, garbage truck, tractor and race car have no realistic model and stay Kenney.
+   - Realistic models keep their real size; `realTemplate` puts the origin under the physics CoG and passes the measured wheelbase/track/wheel radius to `car_physics.js` via `spec.geom` (per-vehicle spec copy in `Vehicle`).
+   - `?q=low` skips the two ~40k-triangle sports cars (rossini-9x, vector-gt). Kenney models remain the fallback when a GLB fails to load.
+   - Tests: `tools-tests/cars_test.js`, `cars_shots.js`, `accel_compare.js`, `boot_time.js`.
 3. **The Ultra graphics preset is unfinished.** The paused agent's work is saved as WIP commit `b44bcd2` on local branch `worktree-agent-ad40c8d74005d9917`, in worktree `.claude/worktrees/agent-ad40c8d74005d9917`. It touches `gfx.js` (new), `main.js`, `world.js`, `index.html` and `assets/textures/` (CC0 ambientCG textures), and adds 792 lines. It is **untested**: review it, finish it, and merge it.
    - Intended Ultra pipeline: EffectComposer, then GTAOPass, half-res UnrealBloom (night-aware), OutputPass with AgX, then SMAA.
    - Also intended: Sky.js with a PMREM environment map regenerated when the sun moves; CSM shadows with 4 cascades; Water.js on the sea; height fog; terrain detail textures; grass near the camera.

@@ -260,9 +260,17 @@ function wheelGeo(r, w) {
 const rimGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.27, 8).rotateZ(Math.PI / 2);
 
 // Build a vehicle Object3D. Returns {root, wheels[], rotor, tail, prop, bodyMesh, siren[]}
+// Realistic-model variant from the colour, so every client (net.js ghosts) picks the same body.
+function variantFor(color) {
+  let h = (color >>> 0) || 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
 export function buildVehicleMesh(type, color) {
   const s = VSPEC[type];
-  const model = buildVehicleModel(type, s, type === 'police' || type === 'taxi' || type === 'firetruck' || type === 'ambulance' || type === 'garbage' ? null : color);
+  // Kenney liveries are painted into the texture; the realistic police/taxi body is repainted instead
+  const keepLivery = type === 'police' || type === 'taxi' || type === 'firetruck' || type === 'ambulance' || type === 'garbage';
+  const model = buildVehicleModel(type, s, color, { variant: variantFor(color), keepLivery });
   if (model) {
     model.siren = [];
     if (type === 'police' || type === 'policeHeli') {
@@ -276,6 +284,14 @@ export function buildVehicleMesh(type, color) {
       b.position.set(0.28, y, z);
       model.root.add(a, b);
       model.siren = [a, b];
+    }
+    // the realistic taxi is a repainted car: give it the roof sign the Kenney taxi has
+    if (type === 'taxi' && model.real) {
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.2, 0.26), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
+      sign.position.set(0, model.size.y + 0.08, model.size.z * 0.02);
+      sign.castShadow = true;
+      model.root.add(sign);
+      model.meshes.push(sign);
     }
     return model;
   }

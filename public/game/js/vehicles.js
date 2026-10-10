@@ -38,6 +38,11 @@ export class Vehicle {
     this.color = color;
     const m = buildVehicleMesh(type, color);
     this.m = m;
+    // realistic models carry their own footprint and wheel layout: per-vehicle spec copy
+    if (m.dims) {
+      this.spec = Object.assign({}, this.spec, m.dims, { geom: m.geom, wheelR: m.geom.wheelR });
+      if (m.displayName && type !== 'police' && type !== 'taxi') this.spec.name = m.displayName;
+    }
     this.root = m.root;
     this.root.rotation.order = 'YXZ';
     this.pos = new THREE.Vector3(x, y ?? groundHeight(x, z) + 0.05, z);
