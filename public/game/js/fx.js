@@ -101,6 +101,7 @@ function updSys(sys, dt) {
 }
 
 export function setFxScale(px) {
+  if (!addSys) return; // window resized while the world is still loading; init calls onResize again
   addSys.pts.material.uniforms.scale.value = px;
   alphaSys.pts.material.uniforms.scale.value = px;
 }
