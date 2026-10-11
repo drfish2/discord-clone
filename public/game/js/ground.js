@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { G, clamp, sstep, WATER } from './core.js';
 import {
-  H, TN, TS, HALF, BIOMES, biomeAt, urbanAt, terrainHeight, nearestRoad, buildingsNear, inAirfield, onAirportSlab,
+  H, TN, TS, HALF, BIOMES, biomeAt, urbanAt, terrainHeight, nearestRoad, buildingsNear, inAirfield, onAirportSlab, styleOf,
 } from './terrain.js';
 import { noise2, mulberry32 } from './noise.js';
 import { inlineData } from './assets.js'; // CSP-safe embedded buffers/images (artifact host)
@@ -102,6 +102,15 @@ function biomeOneHot(b, w, k) {
   else if (b === BIOMES.ALPINE) { w[5] += k * 0.6; w[2] += k * 0.4; }
   else w[0] += k;
 }
+// urban ground mixes over the 8 layers: grass, forest, dirt, sand, mud, meadow, rock, snow
+const URBAN_GROUND = {
+  mixed: [0, 0, 0.25, 0, 0, 0.75, 0, 0],
+  paved: [0, 0, 0.05, 0, 0.1, 0.15, 0.7, 0],
+  lawn: [0.6, 0, 0.05, 0, 0, 0.35, 0, 0],
+  sand: [0, 0, 0.2, 0.45, 0, 0.35, 0, 0],
+  dirt: [0, 0, 0.85, 0.1, 0, 0.05, 0, 0],
+  forest: [0.2, 0.45, 0.1, 0, 0, 0.25, 0, 0],
+};
 export function splatWeights(x, z, h, slope, outA, outB, o) {
   W8.fill(0);
   // the biome grid is 30 m nearest-neighbour: average a few taps so borders blend
@@ -115,9 +124,13 @@ export function splatWeights(x, z, h, slope, outA, outB, o) {
   W8[5] += W8[0] * m; W8[0] *= 1 - m;
   const u = urbanAt(x, z);
   if (u > 0.05) {
+    // what lies between the buildings depends on the district (districts.js `ground`):
+    // paved/gravel yards in the dense and industrial quarters, lawns in the suburbs,
+    // sand in the beach towns, bare dirt in the desert
     const k = sstep(0.05, 0.5, u) * 0.85;
     for (let i = 0; i < 8; i++) W8[i] *= 1 - k;
-    W8[5] += k * 0.75; W8[2] += k * 0.25;
+    const gw = URBAN_GROUND[styleOf(x, z).ground || 'mixed'];
+    for (let i = 0; i < 8; i++) W8[i] += k * gw[i];
   }
   // coast: sand within ~3 m of sea level (wet sand is done per pixel), dunes behind beaches
   const n = noise2(x * 0.02, z * 0.02);
@@ -170,13 +183,13 @@ export function terrainMaterial() {
       sh.uniforms['cL' + i] = { value: new THREE.Vector3(...toLin(tgt)) };
     });
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 splatA; attribute vec4 splatB; varying vec4 vSA; varying vec4 vSB; varying vec3 vWP; varying vec3 vWN;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSA = splatA; vSB = splatB; vWP = (modelMatrix * vec4(position, 1.0)).xyz; vWN = normal;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 splatA; attribute vec4 splatB; attribute vec3 tint; varying vec4 vSA; varying vec4 vSB; varying vec3 vWP; varying vec3 vWN; varying vec3 vTint;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSA = splatA; vSB = splatB; vWP = (modelMatrix * vec4(position, 1.0)).xyz; vWN = normal; vTint = tint;');
     let uni = '';
     for (let i = 0; i < L.length; i++) uni += `uniform sampler2D tL${i}; uniform vec4 aL${i}; uniform vec3 cL${i};\n`;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec4 vSA; varying vec4 vSB; varying vec3 vWP; varying vec3 vWN;
+        varying vec4 vSA; varying vec4 vSB; varying vec3 vWP; varying vec3 vWN; varying vec3 vTint;
         ${uni}
         float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float gNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -223,10 +236,10 @@ export function terrainMaterial() {
           // large-scale brightness / hue patches
           col *= 0.86 + 0.22 * n1 + 0.08 * (n2 - 0.5);
           col = mix(col, col * vec3(1.08, 1.0, 0.82), smoothstep(0.55, 0.9, gNoise(wp.xz * 0.004 + 7.0)) * (A.x + B.y) * 0.6);
-          diffuseColor.rgb = col;
+          diffuseColor.rgb = col * vTint;
         }`);
   };
-  mat.customProgramCacheKey = () => 'cc-terrain-splat' + (low ? '-low' : '');
+  mat.customProgramCacheKey = () => 'cc-terrain-splat2' + (low ? '-low' : '');
   return mat;
 }
 
@@ -406,6 +419,8 @@ function genGrassChunk(ci, cj) {
     else if (b === BIOMES.URBAN) keep = 0.75;
     const u = urbanAt(x, z);
     keep *= 1 - sstep(0.45, 0.9, u) * 0.85;
+    // paved yards, sandy beach towns and the desert town grow little grass between the buildings
+    if (u > 0.1) { const gk = styleOf(x, z).ground; if (gk === 'paved' || gk === 'dirt' || gk === 'sand') keep *= 1 - sstep(0.1, 0.4, u) * 0.85; }
     // patchy fields: thinner in some places
     keep *= 0.55 + 0.45 * sstep(-0.4, 0.3, noise2(x * 0.05, z * 0.05));
     if (r1 > keep) continue;

@@ -314,6 +314,17 @@ function fenceCanvas(kind) {
   } else if (kind === 'rail') {
     fillWood(0, 30, W, 20); fillWood(0, 110, W, 20); fillWood(0, 185, W, 18);
     fillWood(0, 0, 22, Hh); fillWood(W - 22, 0, 22, Hh);
+  } else if (kind === 'chain') {
+    // chain-link: a diamond wire mesh between galvanised posts, a top rail and a strand of barbed wire
+    g.strokeStyle = 'rgba(220,224,228,0.95)'; g.lineWidth = 2;
+    for (let x = -Hh; x < W + Hh; x += 18) {
+      g.beginPath(); g.moveTo(x, 26); g.lineTo(x + (Hh - 26), Hh); g.stroke();
+      g.beginPath(); g.moveTo(x, Hh); g.lineTo(x + (Hh - 26), 26); g.stroke();
+    }
+    g.fillStyle = '#c8ccd0';
+    g.fillRect(0, 22, W, 7); g.fillRect(0, 0, 10, Hh); g.fillRect(W - 10, 0, 10, Hh);
+    g.fillRect(0, 6, W, 2);
+    for (let x = 6; x < W; x += 22) g.fillRect(x, 3, 6, 7);
   } else {
     // privacy: tight vertical boards with a capping rail
     for (let x = 0; x < W; x += 32) { fillWood(x, 4, 31, Hh - 4); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x + 30, 4, 2, Hh - 4); }
@@ -395,9 +406,9 @@ export function buildFences(scene, fences) {
   for (const [type, list] of Object.entries(by)) {
     const F = FENCE[type];
     let geo = pg, mat, thick = 1;
-    if (type === 'picket' || type === 'rail' || type === 'privacy') {
+    if (type === 'picket' || type === 'rail' || type === 'privacy' || type === 'chain') {
       const tex = fenceCanvas(type);
-      mat = foliagePatch(new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide, color: type === 'picket' ? 0xf4f2ec : type === 'privacy' ? 0xb79470 : 0x957a5c }), { cacheKey: 'fence' });
+      mat = foliagePatch(new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide, color: type === 'picket' ? 0xf4f2ec : type === 'privacy' ? 0xb79470 : type === 'chain' ? 0xb8bcc0 : 0x957a5c }), { cacheKey: 'fence' });
     } else {
       geo = bg;
       thick = F.t;

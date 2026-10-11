@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { G, clamp, lerp, sstep, WATER } from './core.js';
 import {
   H, TN, TS, HALF, segs, roads, junctions, buildings, trees, lamps, ramps, decor, signs, props, SIDEWALK, CURB, fences, beachProps,
-  terrainHeight, biomeAt, urbanAt, BIOMES, AIRPORTS, generateWorldData,
+  terrainHeight, biomeAt, urbanAt, BIOMES, AIRPORTS, generateWorldData, styleOf, styleAt,
 } from './terrain.js';
+import { STYLES } from './districts.js';
+import { buildDressing, updateDressing } from './dressing.js';
 import { noise2 } from './noise.js';
 import { mergeGeos } from './models.js';
 import { hasModel, instanceProp, updateTileVisibility, TILED } from './assets.js';
@@ -70,6 +72,63 @@ function roadTexture(kind) {
   });
 }
 
+// district asphalt tints folded into four tones (fewer materials, fewer draw calls)
+const TONES = [0x6c6c70, 0x7a7a7e, 0x85837f, 0x9a9088];
+function roadTone(hex) {
+  const r = (hex >> 16) & 255, b = hex & 255;
+  if (r - b > 12) return TONES[3]; // warm, dusty
+  return r < 0x72 ? TONES[0] : r < 0x80 ? TONES[1] : TONES[2];
+}
+// district pavements, drawn at load time (one texture repeat = 3 m across the pavement)
+function pavementMaterial(key) {
+  const rnd = mulberryLocal(key.length * 97 + 13);
+  const tex = canvasTex(128, 128, (g, w, h) => {
+    const speck = (n, lo, hi, a = 0.35) => { for (let i = 0; i < n; i++) { const v = lo + rnd() * (hi - lo); g.fillStyle = `rgba(${v},${v},${v},${a})`; g.fillRect(rnd() * w, rnd() * h, 2, 2); } };
+    if (key === 'granite') {
+      // big pale granite flags
+      g.fillStyle = '#c4c1ba'; g.fillRect(0, 0, w, h);
+      speck(1600, 120, 230, 0.3);
+      g.strokeStyle = 'rgba(60,60,60,0.4)'; g.lineWidth = 1.5;
+      for (let y = 0; y <= h; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+      for (let x = 0; x <= w; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    } else if (key === 'brick' || key === 'terra') {
+      // herringbone-ish pavers: red brick or terracotta
+      g.fillStyle = key === 'brick' ? '#6e3a2c' : '#8a5a42'; g.fillRect(0, 0, w, h);
+      for (let y = 0; y < h; y += 8) for (let x = 0; x < w; x += 16) {
+        const o = (y / 8) % 2 ? 8 : 0, v = 0.82 + rnd() * 0.3;
+        const [r, gg, b] = key === 'brick' ? [150, 72, 54] : [196, 120, 82];
+        g.fillStyle = `rgb(${r * v | 0},${gg * v | 0},${b * v | 0})`;
+        g.fillRect(x + o + 1, y + 1, 14, 6);
+      }
+    } else if (key === 'pink') {
+      // terrazzo: warm pink with chips and wide joints
+      g.fillStyle = '#e6c2bc'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 900; i++) { const c = ['#f6e7e2', '#c99a92', '#ffffff', '#b8a49c'][i % 4]; g.fillStyle = c; g.fillRect(rnd() * w, rnd() * h, 1 + rnd() * 2, 1 + rnd() * 2); }
+      g.fillStyle = 'rgba(255,255,255,0.7)';
+      for (let y = 0; y < h; y += 43) g.fillRect(0, y, w, 2);
+    } else if (key === 'dust') {
+      // cracked, sun-bleached concrete with sand drifted on it
+      g.fillStyle = '#c2ab8c'; g.fillRect(0, 0, w, h);
+      speck(1200, 150, 220, 0.35);
+      g.strokeStyle = 'rgba(80,60,40,0.45)'; g.lineWidth = 1;
+      for (let i = 0; i < 9; i++) { g.beginPath(); let x = rnd() * w, y = rnd() * h; g.moveTo(x, y); for (let k = 0; k < 5; k++) { x += (rnd() - 0.5) * 30; y += (rnd() - 0.5) * 30; g.lineTo(x, y); } g.stroke(); }
+      g.strokeStyle = 'rgba(70,60,50,0.4)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+    } else {
+      // 'dark': worn grey concrete with stains
+      g.fillStyle = '#7e7c78'; g.fillRect(0, 0, w, h);
+      speck(1400, 70, 140, 0.4);
+      for (let i = 0; i < 6; i++) { const gr = g.createRadialGradient(rnd() * w, rnd() * h, 0, rnd() * w, rnd() * h, 20); gr.addColorStop(0, 'rgba(30,28,26,0.35)'); gr.addColorStop(1, 'rgba(30,28,26,0)'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }
+      g.strokeStyle = 'rgba(40,40,40,0.4)'; g.lineWidth = 2;
+      for (let y = 0; y <= h; y += 42) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    }
+  });
+  return new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+}
+function mulberryLocal(a) {
+  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
 // ---------------------------------------------------------------- terrain
 function terrainColor(x, z, h, slope, out) {
   const n = noise2(x * 0.02, z * 0.02) * 0.05 + noise2(x * 0.2, z * 0.2) * 0.02;
@@ -107,6 +166,7 @@ function buildTerrain(scene) {
       const pos = new Float32Array(n * n * 3);
       const nor = new Float32Array(n * n * 3);
       const col = new Float32Array(n * n * 3);
+      const tint = new Float32Array(n * n * 3);
       const sa = tex ? new Float32Array(n * n * 4) : null, sb = tex ? new Float32Array(n * n * 4) : null;
       let k = 0;
       for (let j = 0; j < n; j++)
@@ -120,6 +180,11 @@ function buildTerrain(scene) {
           nor[k] = V.x; nor[k + 1] = V.y; nor[k + 2] = V.z;
           terrainColor(x, z, h, Math.hypot(dx, dz) / (2 * TS), C);
           if (tex) splatWeights(x, z, h, Math.hypot(dx, dz) / (2 * TS), sa, sb, (k / 3) * 4);
+          // district ground tint (lawns greener, docks greyer, desert town dustier), averaged over 5 taps
+          let tr = 0, tg = 0, tb = 0;
+          for (const [ox, oz] of [[0, 0], [22, 9], [-22, -9], [9, -22], [-9, 22]]) { const t = STYLES[styleAt(x + ox, z + oz)].tint; tr += t[0]; tg += t[1]; tb += t[2]; }
+          tint[k] = tr / 5; tint[k + 1] = tg / 5; tint[k + 2] = tb / 5;
+          if (!tex) { C.r *= tint[k]; C.g *= tint[k + 1]; C.b *= tint[k + 2]; }
           col[k] = C.r; col[k + 1] = C.g; col[k + 2] = C.b;
           k += 3;
         }
@@ -133,7 +198,7 @@ function buildTerrain(scene) {
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
       geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-      if (tex) { geo.setAttribute('splatA', new THREE.BufferAttribute(sa, 4)); geo.setAttribute('splatB', new THREE.BufferAttribute(sb, 4)); }
+      if (tex) { geo.setAttribute('splatA', new THREE.BufferAttribute(sa, 4)); geo.setAttribute('splatB', new THREE.BufferAttribute(sb, 4)); geo.setAttribute('tint', new THREE.BufferAttribute(tint, 3)); }
       geo.setIndex(idx);
       geo.computeBoundingSphere();
       const m = new THREE.Mesh(geo, mat);
@@ -250,14 +315,32 @@ function buildRoads(scene) {
     for (let x = 10; x < w; x += 26) g.fillRect(x, 4, 14, h - 8);
   }), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide });
 
+  // asphalt tinted per district (bleached in the desert, dark and fresh downtown), pavements per district
+  const tinted = {};
+  const roadMat = (kind, tint) => {
+    const k = kind + tint;
+    // Color(hex) is already linear: scale so the neutral grey 0x7a7a7a leaves the asphalt 15 % lighter than before
+    if (!tinted[k]) { tinted[k] = mats[kind].clone(); tinted[k].color = new THREE.Color(tint).multiplyScalar(1.15 / new THREE.Color(0x7a7a7a).r); }
+    return tinted[k];
+  };
+  const paveMats = {};
+  const paveMat = (key) => (paveMats[key] = paveMats[key] || pavementMaterial(key));
   const B = { main: new Map(), city: new Map(), rural: new Map() };
+  const BT = new Map(); // `${kind}|${tint}` -> buckets
+  const walkBy = new Map(); // pave key -> buckets
   const walk = new Map(), curb = new Map(), jn = new Map(), cross = new Map();
   // how far a road's pavement stops short of a junction
   const clearAt = (n) => (n.edges.length >= 3 ? Math.max(...n.edges.map((e) => e.s.w)) / 2 + SIDEWALK : 0);
   for (const road of roads) {
     const P = roadPath(road);
     const L = P[P.length - 1].d;
-    stripRange(B[road.kind], P, road.w / 2, -road.w / 2, 0.06, 0, L);
+    const mid = road.nodes[Math.floor(road.nodes.length / 2)];
+    const rst = styleOf(mid.x, mid.z);
+    const rk = road.kind + '|' + roadTone(rst.road);
+    if (!BT.has(rk)) BT.set(rk, new Map());
+    stripRange(BT.get(rk), P, road.w / 2, -road.w / 2, 0.06, 0, L);
+    if (!walkBy.has(rst.pave)) walkBy.set(rst.pave, new Map());
+    const walkB = walkBy.get(rst.pave);
     const pave = road.segs.some((s) => s.sidewalk);
     if (!pave) continue;
     const a = road.nodes[0], z = road.nodes[road.nodes.length - 1];
@@ -274,7 +357,7 @@ function buildRoads(scene) {
         if (s1 - s0 > 1) {
           for (const side of [1, -1]) {
             const i0 = side * road.w / 2, i1 = side * (road.w / 2 + SIDEWALK);
-            stripRange(walk, P, i0, i1, 0.06 + CURB, s0, s1, 3);
+            stripRange(walkB, P, i0, i1, 0.06 + CURB, s0, s1, 3);
           }
         }
         runStart = null;
@@ -331,8 +414,9 @@ function buildRoads(scene) {
     }
     for (let k = 0; k < 12; k++) b.i.push(o, o + 1 + ((k + 1) % 12), o + 1 + k);
   }
-  for (const k of Object.keys(B)) addTiled(scene, B[k], mats[k]);
-  addTiled(scene, walk, walkMat);
+  for (const [k, map] of BT) { const [kind, tint] = k.split('|'); addTiled(scene, map, roadMat(kind, +tint)); }
+  for (const [k, map] of walkBy) addTiled(scene, map, k === 'conc' ? walkMat : paveMat(k));
+  void B; void walk;
   addTiled(scene, curb, curbMat);
   addTiled(scene, jn, jMat);
   addTiled(scene, cross, crossMat);
@@ -462,6 +546,9 @@ const FACADE_GLSL = /* glsl */ `
 varying vec3 vWP; varying vec3 vWN; varying vec3 vNW; varying vec3 vLP; flat varying vec4 vFac; flat varying vec3 vDim; varying float vInner;
 uniform float uNight; uniform sampler2D uDetail;
 vec3 bEm; float bGlass; vec3 bTint;
+// window modifiers set per fragment before windowAt: arched tops, shutters, muntin grid, boarded-up
+// windows (chance), iron bars
+float gArch, gShut, gGrid, gBoard, gBars; vec3 gShutCol;
 // sine-free hash (stable on mobile GPUs and SwiftShader)
 float h21(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 // anti-aliased 0..1 coverage of lo < x < hi
@@ -501,6 +588,26 @@ void windowAt(float u, float fy, float faceW, float bayT, float winW, float winH
   float hw = min(winW, bw - 0.5) * 0.5;
   float outer = bx(fx, -hw, hw) * bx(fy, sill, sill + winH);
   float inner = bx(fx, -hw + frameW, hw - frameW) * bx(fy, sill + frameW, sill + winH - frameW);
+  if (gArch > 0.5) {
+    // round-headed window: the top hw of the opening is a half circle
+    float ay = sill + winH - hw;
+    float rr = length(vec2(fx, fy - ay));
+    float w2 = fwidth(rr) + 1e-3;
+    float up = step(ay, fy);
+    outer *= mix(1.0, 1.0 - smoothstep(hw - w2, hw + w2, rr), up);
+    inner *= mix(1.0, 1.0 - smoothstep(hw - frameW - w2, hw - frameW + w2, rr), up);
+  }
+  if (gShut > 0.5) {
+    float sw = min(hw * 0.95, 0.6);
+    float sh = (bx(fx, hw + 0.05, hw + 0.05 + sw) + bx(fx, -hw - 0.05 - sw, -hw - 0.05)) * bx(fy, sill, sill + winH);
+    col = mix(col, gShutCol * (0.8 + 0.2 * step(0.35, fract(fy / 0.11))), sh);
+  }
+  if (gBoard > 0.0 && h21(vec2(k, 5.3)) < gBoard) {
+    // boarded up: plywood over the opening, no glass and no light
+    col = mix(col, vec3(0.6, 0.49, 0.33) * (0.85 + 0.15 * step(0.5, fract((fx + hw) / 0.61))), outer);
+    return;
+  }
+  if (gGrid > 0.0) inner *= 1.0 - 0.92 * max(bx(abs(fract((fx + hw) / gGrid) - 0.5), 0.45, 1.0), bx(abs(fract((fy - sill) / gGrid) - 0.5), 0.45, 1.0));
   float bar = hw > 0.62 ? bx(fx, -0.03, 0.03) : 0.0;
   bar = max(bar, bx(fy, sill + winH * 0.72 - 0.03, sill + winH * 0.72 + 0.03));
   inner *= 1.0 - bar * 0.95;
@@ -511,15 +618,21 @@ void windowAt(float u, float fy, float faceW, float bayT, float winW, float winH
   vec3 g = glassCol(k, kind, inner, (fy - sill) / winH);
   g *= mix(1.0, 0.55, bx(fy, sill + winH - frameW - 0.14, sill + winH)); // the reveal's shadow
   col = mix(col, g, inner);
+  if (gBars > 0.5) col = mix(col, vec3(0.1, 0.1, 0.11), outer * max(bx(abs(fract(fx / 0.16) - 0.5), 0.4, 1.0), bx(abs(fy - sill - winH * 0.5), -1.0, 0.03)));
 }
 `;
 
 const FACADE_MAIN = /* glsl */ `
 {
   bEm = vec3(0.0); bGlass = 0.0; bTint = vec3(1.0);
+  gArch = 0.0; gShut = 0.0; gGrid = 0.0; gBoard = 0.0; gBars = 0.0; gShutCol = vec3(0.2);
   float T = vFac.x;
+  // district facades (9+) borrow a base type for the shared parts and add their own details (X)
+  float X = 0.0;
+  if (T > 8.5) { X = T; T = X < 10.5 ? 1.0 : X < 11.5 ? 0.0 : X < 14.5 ? 4.0 : X < 15.5 ? 0.0 : 1.0; }
+  bool isTen = (X > 14.5 && X < 15.5) || X > 16.5;
   float GFk = mod(vFac.y, 4.0);
-  float blank = floor(vFac.y / 4.0 + 0.01);
+  float blank = floor(mod(vFac.y, 16.0) / 4.0 + 0.01);
   float seed = vFac.z;
   vec3 n = normalize(vWN);
   vec3 base = diffuseColor.rgb;
@@ -529,6 +642,8 @@ const FACADE_MAIN = /* glsl */ `
   if (n.y > 0.5) {
     vec4 d = texture2D(uDetail, vLP.xz / 2.4);
     col = vInner > 0.99 ? vec3(0.34, 0.33, 0.31) * (0.75 + 0.35 * d.g) * (0.85 + 0.25 * d.a) : vec3(0.66, 0.64, 0.6);
+    if (X > 9.5 && X < 10.5) col = base * (0.7 + 0.25 * d.g); // adobe: mud roof
+    else if (X > 8.5 && X < 9.5 && vInner < 0.99) col = base; // deco: painted coping
   } else if (n.y < -0.5) {
     col = base * 0.4;
   } else {
@@ -545,7 +660,19 @@ const FACADE_MAIN = /* glsl */ `
     else if (T < 2.5 || T > 6.5) col = base * (0.78 + 0.25 * d.b);
     else if (T < 3.5) { col = vec3(0.56, 0.58, 0.6); bTint = mix(vec3(1.0), base / max(max(base.r, base.g), base.b), 0.6); }
     else col = base * (0.8 + 0.25 * step(0.5, fract(u / 0.3)));
-    col *= 0.86 + 0.18 * grime;
+    if (X > 8.5) {
+      if (X < 9.5 || (X > 13.5 && X < 14.5)) col = base * (0.95 + 0.06 * d.g); // smooth render
+      else if (X < 10.5) col = base * (0.78 + 0.32 * d.g) * (0.92 + 0.16 * d.a); // hand-laid mud
+      else if (X > 11.5 && X < 12.5) col = base * (0.93 + 0.07 * d.g) * (0.84 + 0.16 * smoothstep(0.0, 0.035, fract(vWP.y / 0.21))); // weatherboard
+      else if (X > 12.5 && X < 13.5) {
+        // chalet: dressed stone ground floor, vertical timber boards above
+        if (vH < 2.9) col = vec3(0.6, 0.58, 0.54) * (0.6 + 0.45 * d.b) * (0.85 + 0.3 * h21(floor(vec2(u / 0.7 + step(0.5, fract(vH / 0.8)) * 0.5, vH / 0.4))));
+        else col = base * (0.8 + 0.25 * step(0.06, fract(u / 0.2))) * (0.9 + 0.12 * d.a);
+      }
+      else if (X > 15.5 && X < 16.5) col = base * (0.88 + 0.14 * d.g);
+      if (X > 13.5 && X < 14.5 && fract(seed * 13.0) < 0.6 && u < faceW * 0.32) col = vec3(0.52, 0.36, 0.22) * (0.82 + 0.18 * step(0.08, fract(vH / 0.14))); // villa timber panel
+    }
+    col *= isTen ? 0.74 + 0.36 * grime : 0.86 + 0.18 * grime;
     col *= mix(0.8, 1.0, smoothstep(0.0, 0.5, vH));
     bool blankFace = (faceId > 2.5 && mod(blank, 2.0) > 0.5) || (faceId > 0.5 && faceId < 1.5 && blank > 1.5);
     float key = floor(seed * 997.0) + faceId * 31.0;
@@ -574,6 +701,17 @@ const FACADE_MAIN = /* glsl */ `
       else {
         sH = 3.2; gfH = GFk > 0.5 ? 4.4 : 3.5; bayT = 3.0 + seed * 0.8; winW = 1.25 + 0.3 * fract(seed * 7.0); winH = 1.55 + 0.25 * fract(seed * 13.0); sill = 0.85;
         if (T < 0.5) { lintel = 0.22; sillCol = vec3(0.82, 0.8, 0.74); } else frameCol = fract(seed * 5.0) < 0.5 ? vec3(0.95) : vec3(0.22, 0.24, 0.25);
+      }
+      if (X > 8.5) {
+        if (X < 9.5) { sH = 3.2; gfH = GFk > 0.5 ? 4.4 : 3.5; bayT = 2.2 + seed * 0.6; winW = 1.6; winH = 1.35; sill = 0.95; frameCol = vec3(0.96); sillCol = min(col * 1.08, vec3(1.0)); lintel = 0.0; }
+        else if (X < 10.5) { sH = 3.0; gfH = GFk > 0.5 ? 4.4 : 3.2; bayT = 3.6; winW = 0.9; winH = 1.1; sill = 1.0; frameCol = vec3(0.32, 0.22, 0.13); sillCol = vec3(0.4, 0.28, 0.17); lintel = 0.18; }
+        else if (X < 11.5) { sH = 4.2; gfH = 5.0; bayT = 3.6; winW = 2.5; winH = 2.6; sill = 0.9; kind = 2.0; frameCol = vec3(0.16, 0.17, 0.18); sillCol = vec3(0.7, 0.66, 0.6); lintel = 0.3; gGrid = 0.42; }
+        else if (X < 12.5) { sH = 2.9; gfH = 2.9; bayT = 3.0 + seed * 0.6; winW = 1.0; winH = 1.4; sill = 0.9; frameCol = vec3(0.96); sillCol = vec3(0.96); lintel = 0.0;
+          gShut = step(0.35, fract(seed * 19.0)); float sc = fract(seed * 23.0); gShutCol = sc < 0.25 ? vec3(0.12, 0.25, 0.16) : sc < 0.5 ? vec3(0.1, 0.14, 0.25) : sc < 0.75 ? vec3(0.08) : vec3(0.45, 0.1, 0.08); }
+        else if (X < 13.5) { sH = 2.9; gfH = 2.9; bayT = 2.8; winW = 1.0; winH = 1.25; sill = 0.95; frameCol = vec3(0.95); lintel = 0.0; gShut = 1.0; gShutCol = fract(seed * 7.0) < 0.5 ? vec3(0.5, 0.1, 0.08) : vec3(0.14, 0.32, 0.18); }
+        else if (X < 14.5) { sH = 3.3; gfH = 3.3; bayT = 3.8; winW = 3.2; winH = 2.6; sill = 0.25; kind = 0.0; frameCol = vec3(0.15, 0.15, 0.16); sillCol = col; lintel = 0.0; }
+        else if (isTen) { sH = 3.0; gfH = GFk > 0.5 ? 4.0 : 3.2; bayT = 2.5; winW = 1.05; winH = 1.5; sill = 0.9; frameCol = vec3(0.3); sillCol = vec3(0.55, 0.53, 0.5); lintel = X < 15.5 ? 0.2 : 0.0; gBoard = 0.16; }
+        else { sH = 3.3; gfH = GFk > 0.5 ? 4.4 : 3.5; bayT = 3.0; winW = 1.1; winH = 1.8; sill = 0.9; frameCol = vec3(0.3, 0.2, 0.12); sillCol = col * 0.92; lintel = 0.0; gArch = 1.0; }
       }
       float nF = max(0.0, floor((topH - gfH - 0.45) / sH));
       float upTop = gfH + nF * sH;
@@ -605,6 +743,12 @@ const FACADE_MAIN = /* glsl */ `
           col = mix(col, vec3(0.2, 0.2, 0.21) * (0.9 + 0.2 * d.b), inShop * bx(vH, 0.0, 0.45) * (1.0 - isDoor));
           float gl = inShop * max(pane, max(dpane, trans));
           col = mix(col, glassCol(key + bi * 5.0, 1.0, gl, (vH - 0.45) / 2.55), gl);
+          if (isTen && fract(seed * 31.0) < 0.6) {
+            // roll-down security shutters
+            float shut = inShop * bx(vH, 0.0, glassTop) * (1.0 - isDoor * step(0.5, fract(seed * 7.0)));
+            col = mix(col, vec3(0.5, 0.51, 0.52) * (0.8 + 0.2 * step(0.3, fract(vH / 0.09))), shut);
+            bEm *= 1.0 - shut;
+          }
           col = mix(col, vec3(0.75, 0.75, 0.72), isDoor * bx(vH, 1.0, 1.06) * bx(abs(bxp), 0.08, 0.45));
           float fas = inShop * bx(vH, 3.15, 3.95);
           col = mix(col, sc * 0.85, fas);
@@ -645,9 +789,9 @@ const FACADE_MAIN = /* glsl */ `
             col = mix(col, vec3(0.8, 0.7, 0.35), leaf * bx(fx, 0.33, 0.41) * bx(vH, 0.98, 1.06));
             col = mix(col, vec3(0.5, 0.49, 0.46), bx(fx, -0.75, 0.75) * bx(vH, -1.0, 0.06));
             bEm += bx(fx, 0.64, 0.74) * bx(vH, 1.9, 2.1) * uNight * vec3(1.0, 0.8, 0.5);
-          } else windowAt(u, vH, faceW, bayT, winW, winH, gSill, key, kind, frameW, frameCol, sillCol, lintel, col);
+          } else { gBars = isTen ? 1.0 : 0.0; windowAt(u, vH, faceW, bayT, winW, winH, gSill, key, kind, frameW, frameCol, sillCol, lintel, col); gBars = 0.0; }
         }
-        if (T < 1.5) col = mix(col, trim * (T < 0.5 ? 0.95 : 1.02), bx(vH, gfH - 0.25, gfH));
+        if (T < 1.5 && (X < 0.5 || X > 10.5)) col = mix(col, trim * (T < 0.5 ? 0.95 : 1.02), bx(vH, gfH - 0.25, gfH));
       } else if (vH < upTop) {
         float fl = floor((vH - gfH) / sH);
         float fy = vH - gfH - fl * sH;
@@ -657,12 +801,83 @@ const FACADE_MAIN = /* glsl */ `
           float g = bx(fy, sill, sH - 0.05) * (1.0 - bx(abs(fract(u / 1.5) - 0.5), 0.475, 1.0));
           col = mix(col, glassCol(key + fl * 3.1 + floor(u / 1.5) * 0.37, 2.0, g, (fy - sill) / (sH - sill)), g);
         } else {
+          gBars = isTen && fl < 0.5 ? 1.0 : 0.0;
           windowAt(u, fy, faceW, bayT, winW, winH, sill, key + fl * 13.7, kind, frameW, frameCol, sillCol, lintel, col);
-          if (T > 0.5 && T < 1.5) col = mix(col, trim, bx(fy, -0.01, 0.16));
+          gBars = 0.0;
+          if (T > 0.5 && T < 1.5 && X < 0.5) col = mix(col, trim, bx(fy, -0.01, 0.16));
           if (T > 1.5 && T < 2.5) col = mix(col, col * 0.88, bx(fy, -0.01, 0.5));
         }
       }
-      if (T < 1.5 || T > 4.5) col = mix(col, trim, bx(vH, topH - 0.32, topH - 0.12));
+      if ((X < 0.5 && (T < 1.5 || T > 4.5)) || (X > 10.5 && X < 11.5) || isTen || (X > 15.5 && X < 16.5)) col = mix(col, trim, bx(vH, topH - 0.32, topH - 0.12));
+      // district details on top of the windows
+      if (X > 8.5 && !blankFace) {
+        float edge = min(u, faceW - u);
+        float fl2 = floor((vH - gfH) / sH), fy2 = vH - gfH - fl2 * sH;
+        bool upper = vH > gfH && vH < upTop;
+        if (X < 9.5) {
+          // art deco: rounded corners (shading), eyebrow ledges over the window rows, a vertical
+          // fin and a coloured band at the top, both trimmed with neon at night
+          vec3 acc = mix(vec3(0.5 + 0.5 * cos(6.283 * (fract(seed * 5.7) + vec3(0.0, 0.33, 0.67)))), vec3(1.0), 0.2);
+          col *= 0.8 + 0.2 * smoothstep(0.0, 1.3, edge);
+          if (upper) { float ey = sill + winH; col = mix(col, col * 0.6, bx(fy2, ey - 0.02, ey + 0.07)); col = mix(col, min(col * 1.18, vec3(1.0)), bx(fy2, ey + 0.07, ey + 0.22)); }
+          col = mix(col, acc, bx(vH, topH - 1.0, topH - 0.4));
+          bEm += uNight * acc * 1.3 * bx(vH, topH - 1.06, topH - 0.96);
+          bEm += uNight * acc * 0.8 * bx(vH, gfH - 0.12, gfH - 0.02);
+          if (front && faceW > 8.0 && fract(seed * 7.0) < 0.65) {
+            float fd = abs(u - faceW * 0.5);
+            col = mix(col, acc, bx(fd, -1.0, 0.45) * step(gfH, vH));
+            bEm += uNight * acc * 1.4 * bx(fd, 0.38, 0.5) * step(gfH, vH);
+          }
+        } else if (X < 10.5) {
+          // adobe: soft rounded corners, a row of timber vigas under the parapet
+          col *= 0.74 + 0.26 * smoothstep(0.0, 1.4, edge);
+          col = mix(col, vec3(0.3, 0.2, 0.12), bx(vH, topH - 1.15, topH - 0.9) * bx(fract(u / 0.95), 0.4, 0.66) * bx(u, 0.5, faceW - 0.5));
+        } else if (X < 11.5) {
+          // industrial: a faded painted sign high on a side wall
+          if (!front && fract(seed * 3.1) < 0.55) {
+            float lu3 = u / 0.9;
+            float txt = bx(vH, topH - 4.2, topH - 1.9) * bx(fract(lu3), 0.12, 0.82) * step(0.25, h21(vec2(floor(lu3), seed + faceId))) * bx(u, 1.2, faceW - 1.2);
+            col = mix(col, col * 0.75, bx(vH, topH - 4.5, topH - 1.6) * bx(u, 0.8, faceW - 0.8) * 0.5);
+            col = mix(col, vec3(0.86, 0.83, 0.74), 0.55 * txt);
+          }
+        } else if (X < 12.5) {
+          col = mix(col, vec3(0.95), bx(edge, -1.0, 0.14)); // corner boards
+        } else if (X < 13.5) {
+          // chalet: a timber balcony across each upper floor
+          if (upper && front) {
+            float bal = bx(fy2, 0.0, 1.05) * bx(u, faceW * 0.12, faceW * 0.88);
+            col = mix(col, vec3(0.32, 0.21, 0.12) * (0.65 + 0.35 * step(0.45, fract(u / 0.16))), bal);
+            col = mix(col, vec3(0.25, 0.16, 0.09), bx(fy2, 0.95, 1.08) * bx(u, faceW * 0.12, faceW * 0.88));
+          }
+        } else if (X < 14.5) {
+          // villa: crisp floor slabs with a shadow line under them
+          float fyv = mod(vH, sH);
+          col = mix(col, vec3(0.97, 0.96, 0.94), bx(fyv, sH - 0.32, sH + 0.01));
+          col = mix(col, col * 0.7, bx(fyv, 0.0, 0.07) * step(sH, vH));
+        } else if (isTen) {
+          // graffiti over the ground floor, a fire escape on the front
+          float gz = bx(vH, 0.2, 2.7);
+          float cell = floor((u + seed * 20.0) / 3.3);
+          float on = step(0.6, h21(vec2(cell, seed * 13.0 + faceId)));
+          float blob = texture2D(uDetail, vec2(u + seed * 37.0 + faceId * 5.0, vH * 1.6) / 6.0).a;
+          blob = blob * 0.75 + 0.25 * texture2D(uDetail, vec2(u * 1.7, vH * 2.3) / 2.4).g;
+          vec3 gc = vec3(0.5 + 0.5 * cos(6.283 * (h21(vec2(cell, 2.0)) + vec3(0.0, 0.33, 0.67))));
+          float fillG = smoothstep(0.67, 0.7, blob) * on * gz;
+          float line = (smoothstep(0.63, 0.65, blob) - smoothstep(0.67, 0.69, blob)) * on * gz;
+          col = mix(col, gc, fillG * 0.95);
+          col = mix(col, vec3(0.04), line * 0.9);
+          if (front && faceW > 7.0 && fract(seed * 11.0) < 0.7) {
+            float fe = abs(u - faceW * (0.3 + 0.4 * fract(seed * 3.0)));
+            float span = bx(fe, -1.0, 1.7) * step(gfH + sH * 0.9, vH) * step(vH, upTop);
+            float platf = bx(fy2, -0.03, 0.12), rail = bx(fy2, 0.92, 0.99), bal2 = bx(abs(fract(fe / 0.3) - 0.5), 0.42, 1.0) * bx(fy2, 0.0, 0.95);
+            float ladder = bx(abs(fe - 1.1), -1.0, 0.04) + bx(abs(fe - 0.6), -1.0, 0.04);
+            col = mix(col, vec3(0.1, 0.1, 0.11), span * clamp(platf + rail + bal2 * 0.8 + ladder, 0.0, 1.0));
+          }
+        } else {
+          // mission: a darker plinth
+          col = mix(col, col * 0.82, bx(vH, 0.0, 0.55));
+        }
+      }
     }
   }
   diffuseColor.rgb = col;
@@ -683,7 +898,9 @@ function buildingMaterial(detail) {
         `#include <begin_vertex>
         vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
         // parapet: 0.3 m thick, 0.9 m (towers 1.2 m) above the roof; houses, sheds and roof boxes have none
-        float par = ((aFac.x > 3.5 && aFac.x < 4.5) || (aFac.x > 5.5 && aFac.x < 6.5) || aFac.x > 7.5) ? 0.0 : (aFac.x > 1.5 && aFac.x < 3.5 ? 1.2 : 0.9);
+        // pitched-roof buildings (aFac.y >= 16) and timber types have no parapet either
+        float tx = aFac.x;
+        float par = (aFac.y > 15.5 || (tx > 3.5 && tx < 4.5) || (tx > 5.5 && tx < 6.5) || (tx > 7.5 && tx < 8.5) || (tx > 11.5 && tx < 13.5)) ? 0.0 : (tx > 1.5 && tx < 3.5 ? 1.2 : tx > 9.5 && tx < 10.5 ? 0.6 : 0.9);
         float th = par > 0.0 ? 0.3 : 0.0;
         transformed.xz -= sign(transformed.xz) * aRim.x * th / sc.xz;
         transformed.y += aRim.y * par / sc.y;
@@ -709,7 +926,50 @@ function buildingMaterial(detail) {
         totalEmissiveRadiance += bEm;`
       );
   };
-  mat.customProgramCacheKey = () => 'cc-facade-1';
+  mat.customProgramCacheKey = () => 'cc-facade-2';
+  return mat;
+}
+
+// unit gable prism: ridge along x at y=1, eaves at z=+-0.5, y=0
+function gableGeometry() {
+  const P = [
+    -0.5, 0, 0.5, 0.5, 0, 0.5, 0.5, 1, 0, -0.5, 0, 0.5, 0.5, 1, 0, -0.5, 1, 0, // front slope
+    0.5, 0, -0.5, -0.5, 0, -0.5, -0.5, 1, 0, 0.5, 0, -0.5, -0.5, 1, 0, 0.5, 1, 0, // back slope
+    -0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 1, 0, 0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 1, 0, // gable ends
+    -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5, // soffit
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.computeVertexNormals();
+  return g;
+}
+// roof covering in world metres: tile courses on slopes (stronger on warm terracotta colours)
+function roofMaterial() {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRW; varying vec3 vRN;')
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+        vRW = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+        vRN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal);`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRW; varying vec3 vRN;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec3 n = normalize(vRN);
+          float slope = 1.0 - abs(n.y);
+          if (abs(n.y) > 0.05) {
+            vec2 hd = normalize(n.xz + 1e-4);
+            float along = dot(vRW.xz, vec2(-hd.y, hd.x));
+            float down = vRW.y / max(0.15, sqrt(1.0 - n.y * n.y));
+            float row = fract(down / 0.32);
+            float warm = smoothstep(0.05, 0.25, diffuseColor.r - diffuseColor.b);
+            float tile = mix(0.82 + 0.18 * smoothstep(0.0, 0.25, row), 0.7 + 0.3 * smoothstep(0.0, 0.5, abs(fract(along / 0.24 + floor(down / 0.32) * 0.5) - 0.5) * 2.0), warm * 0.6);
+            diffuseColor.rgb *= tile;
+          } else diffuseColor.rgb *= 0.75;
+        }`);
+  };
+  mat.customProgramCacheKey = () => 'cc-roof-1';
   return mat;
 }
 
@@ -732,7 +992,7 @@ function buildBuildings(scene) {
       M4.compose(V.set(b.cx, b.y0, b.cz), Q.setFromAxisAngle(UP, b.rot), S.set(b.hx * 2, b.y1 - b.y0, b.hz * 2));
       m.setMatrixAt(i, M4);
       m.setColorAt(i, C.setHex(b.color));
-      fac.set([b.fac ?? 1, (b.gf ?? 0) + 4 * (b.blank ?? 0), b.seed ?? 0.5, b.gy ?? b.y0 + 0.4], i * 4);
+      fac.set([b.fac ?? 1, (b.gf ?? 0) + 4 * (b.blank ?? 0) + (b.roof ? 16 : 0), b.seed ?? 0.5, b.gy ?? b.y0 + 0.4], i * 4);
     });
     geo.setAttribute('aFac', new THREE.InstancedBufferAttribute(fac, 4));
     m.instanceColor.needsUpdate = true;
@@ -744,12 +1004,26 @@ function buildBuildings(scene) {
     TILED.push(m);
     scene.add(m);
   }
-  // pitched roofs with eaves on houses
+  // pitched roofs with eaves: hipped (pyramid) and gabled (ridge along the street for town
+  // blocks, along the long side for houses and barns). Pitch per building (b.pitch, rise/half-span).
+  const roofMat = roofMaterial();
   const roofGeo = new THREE.ConeGeometry(0.7072, 1, 4, 1);
   roofGeo.rotateY(Math.PI / 4);
   roofGeo.translate(0, 0.5, 0);
-  tiledInstances(scene, roofGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), list.filter((b) => b.roof), (m, b, i) => {
-    M4.compose(V.set(b.cx, b.y1, b.cz), Q.setFromAxisAngle(UP, b.rot), S.set(b.hx * 2 + 0.9, Math.min(b.hx, b.hz) * 0.62, b.hz * 2 + 0.9));
+  roofGeo.deleteAttribute('uv');
+  const roofs = list.filter((b) => b.roof);
+  tiledInstances(scene, roofGeo, roofMat, roofs.filter((b) => b.roofType !== 'gable'), (m, b, i) => {
+    const k = b.pitch ?? 0.62;
+    M4.compose(V.set(b.cx, b.y1, b.cz), Q.setFromAxisAngle(UP, b.rot), S.set(b.hx * 2 + 0.9, Math.min(b.hx, b.hz) * k, b.hz * 2 + 0.9));
+    m.setMatrixAt(i, M4);
+    m.setColorAt(i, C.setHex(b.roof));
+  });
+  tiledInstances(scene, gableGeometry(), roofMat, roofs.filter((b) => b.roofType === 'gable'), (m, b, i) => {
+    // ridge along local x; houses/barns turn it to their long side
+    const along = b.kind === 'block' || b.hx >= b.hz;
+    const span = along ? b.hz : b.hx, len = along ? b.hx : b.hz;
+    const k = b.pitch ?? 0.6;
+    M4.compose(V.set(b.cx, b.y1, b.cz), Q.setFromAxisAngle(UP, b.rot + (along ? 0 : Math.PI / 2)), S.set(len * 2 + 0.7, span * k, span * 2 + 0.9));
     m.setMatrixAt(i, M4);
     m.setColorAt(i, C.setHex(b.roof));
   });
@@ -758,10 +1032,10 @@ function buildBuildings(scene) {
     // shop awnings over the pavement, under the fascia (overhead, so no collider)
     if (b.gf === 1 && b.hx > 2 && b.seed < 0.55) {
       const d = 1.2;
-      addBox(b.cx + fx * (b.hz + d / 2), b.gy + 3.06, b.cz + fz * (b.hz + d / 2), b.hx * 2 - 1, 0.12, d, b.rot, SHOP_AWNINGS[Math.floor(b.seed * 97) % SHOP_AWNINGS.length]);
+      addBox(b.cx + fx * (b.hz + d / 2), b.gy + 3.06, b.cz + fz * (b.hz + d / 2), b.hx * 2 - 1, 0.12, d, b.rot, b.awn ?? SHOP_AWNINGS[Math.floor(b.seed * 97) % SHOP_AWNINGS.length]);
     }
     // chimneys on some houses
-    if (b.kind === 'house' && b.roof && b.seed > 0.4) addBox(b.cx + b.hx * 0.45 * b.c, b.y1 + 1.6, b.cz - b.hx * 0.45 * b.s, 0.7, 3.2, 0.7, b.rot, 0x7a4b3a);
+    if (b.kind === 'house' && b.roof && b.seed > 0.4 && b.roofType !== 'gable') addBox(b.cx + b.hx * 0.45 * b.c, b.y1 + 1.6, b.cz - b.hx * 0.45 * b.s, 0.7, 3.2, 0.7, b.rot, 0x7a4b3a);
     if (b.kind === 'tower' && b.y1 - b.y0 > 30) addBox(b.cx, b.y1 + 1.5, b.cz, b.hx * 0.8, 3, b.hz * 0.7, b.rot, 0x6b6f75);
     if (b.kind === 'hospital' || b.kind === 'police') addBox(b.cx, b.y1 + 0.06, b.cz, 14, 0.1, 14, b.rot, b.kind === 'hospital' ? 0xd32f2f : 0xf2c200);
   }
@@ -845,33 +1119,59 @@ function buildProps(scene) {
 }
 
 function buildLamps(scene) {
+  // three lamp families by district (districts.js `lamp`): KayKit cobra heads on modern streets,
+  // black cast-iron lantern posts in the old quarters, timber poles with a bracket out in the sticks.
+  // Heads are lit in the district's night colour (`light`).
+  const byKind = { kk: [], iron: [], wood: [] };
+  for (const l of lamps) byKind[STYLES[l.st ?? 0].lamp].push({ ...l, cx: l.x, cz: l.z, light: STYLES[l.st ?? 0].light });
   const model = hasModel('kk_streetlight');
-  if (model) {
+  if (!model) { byKind.wood.push(...byKind.kk); byKind.kk = []; }
+  lampMat = new THREE.MeshBasicMaterial({ color: 0x777777 });
+  const heads = [];
+  if (byKind.kk.length) {
     // KayKit street light: arm points along -x, so turn it to reach over the road
-    const mats = lamps.map((l) => new THREE.Matrix4().compose(new THREE.Vector3(l.x, l.y, l.z), new THREE.Quaternion().setFromAxisAngle(UP, l.dir + Math.PI / 2), new THREE.Vector3(7.5, 7.5, 7.5)));
+    const mats = byKind.kk.map((l) => new THREE.Matrix4().compose(new THREE.Vector3(l.x, l.y, l.z), new THREE.Quaternion().setFromAxisAngle(UP, l.dir + Math.PI / 2), new THREE.Vector3(7.5, 7.5, 7.5)));
     for (const m of instanceProp('kk_streetlight', { height: 1, center: false }, mats)) scene.add(m);
+    for (const l of byKind.kk) heads.push({ x: l.x + Math.sin(l.dir) * 1.8, y: l.y + 6.75, z: l.z + Math.cos(l.dir) * 1.8, rot: l.dir, sx: 0.5, sy: 0.15, sz: 0.7, c: l.light });
   }
-  lampMat = new THREE.MeshBasicMaterial({ color: 0x888877 });
-  const pole = new THREE.CylinderGeometry(0.1, 0.14, 7, 6).translate(0, 3.5, 0);
-  const arm = new THREE.BoxGeometry(0.12, 0.12, 2).translate(0, 6.9, -1);
-  const head = new THREE.BoxGeometry(0.5, 0.2, 0.9).translate(0, 6.8, -1.8);
-  const list = lamps.map((l) => ({ ...l, cx: l.x, cz: l.z }));
-  if (model) {
-    tiledInstances(scene, new THREE.BoxGeometry(1, 1, 1), lampMat, list, (m, l, i) => {
-      const ax = Math.sin(l.dir) * 1.8, az = Math.cos(l.dir) * 1.8;
-      M4.compose(V.set(l.x + ax, l.y + 6.75, l.z + az), Q.setFromAxisAngle(UP, l.dir), S.set(0.5, 0.15, 0.7));
+  if (byKind.iron.length) {
+    // fluted post, a collar and a four-sided lantern under a little cap
+    const post = mergeGeos([
+      new THREE.CylinderGeometry(0.2, 0.26, 0.6, 8).translate(0, 0.3, 0),
+      new THREE.CylinderGeometry(0.07, 0.11, 3.7, 8).translate(0, 2.4, 0),
+      new THREE.CylinderGeometry(0.16, 0.1, 0.25, 8).translate(0, 4.3, 0),
+      new THREE.ConeGeometry(0.42, 0.4, 4).rotateY(Math.PI / 4).translate(0, 5.25, 0),
+      new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(0.24, 4.82, 0.24),
+      new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(-0.24, 4.82, 0.24),
+      new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(0.24, 4.82, -0.24),
+      new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(-0.24, 4.82, -0.24),
+    ]);
+    tiledInstances(scene, post, new THREE.MeshLambertMaterial({ color: 0x1c1f1e }), byKind.iron, (m, l, i) => {
+      M4.compose(V.set(l.x, l.y, l.z), Q.setFromAxisAngle(UP, l.dir), S.set(1, 1, 1));
       m.setMatrixAt(i, M4);
-    }, false);
-  } else {
-    tiledInstances(scene, mergeGeos([pole, arm]), new THREE.MeshLambertMaterial({ color: 0x3a3f44 }), list, (m, l, i) => {
+    });
+    for (const l of byKind.iron) heads.push({ x: l.x, y: l.y + 4.82, z: l.z, rot: l.dir, sx: 0.44, sy: 0.72, sz: 0.44, c: l.light });
+  }
+  if (byKind.wood.length) {
+    const pole = mergeGeos([
+      new THREE.CylinderGeometry(0.13, 0.17, 8, 6).translate(0, 4, 0),
+      new THREE.BoxGeometry(0.1, 0.1, 2.2).translate(0, 7.4, -1.05),
+      new THREE.BoxGeometry(0.08, 0.08, 1.2).rotateX(-0.6).translate(0, 6.95, -0.5),
+      new THREE.BoxGeometry(1.4, 0.1, 0.1).translate(0, 7.8, 0),
+    ]);
+    tiledInstances(scene, pole, new THREE.MeshLambertMaterial({ color: 0x5a4632 }), byKind.wood, (m, l, i) => {
       M4.compose(V.set(l.x, l.y, l.z), Q.setFromAxisAngle(UP, l.dir + Math.PI), S.set(1, 1, 1));
       m.setMatrixAt(i, M4);
     });
-    tiledInstances(scene, head, lampMat, list, (m, l, i) => {
-      M4.compose(V.set(l.x, l.y, l.z), Q.setFromAxisAngle(UP, l.dir + Math.PI), S.set(1, 1, 1));
-      m.setMatrixAt(i, M4);
-    }, false);
+    for (const l of byKind.wood) heads.push({ x: l.x + Math.sin(l.dir) * 2.0, y: l.y + 7.3, z: l.z + Math.cos(l.dir) * 2.0, rot: l.dir, sx: 0.4, sy: 0.16, sz: 0.65, c: l.light });
   }
+  // glowing heads, tinted by district light colour (lampMat dims them by day)
+  tiledInstances(scene, new THREE.BoxGeometry(1, 1, 1), lampMat, heads.map((h) => ({ ...h, cx: h.x, cz: h.z })), (m, h, i) => {
+    M4.compose(V.set(h.x, h.y, h.z), Q.setFromAxisAngle(UP, h.rot), S.set(h.sx, h.sy, h.sz));
+    m.setMatrixAt(i, M4);
+    m.setColorAt(i, C.setHex(h.c));
+  }, false);
+  G.lampHeads = heads;
 }
 
 // ---------------------------------------------------------------- airports
@@ -1090,7 +1390,8 @@ export function updateWorld(dt, focus) {
   hemi.intensity = 0.25 + day * 0.75;
   sun.position.set(focus.x + lightDir.x * 400, focus.y + lightDir.y * 400, focus.z + lightDir.z * 400);
   sun.target.position.copy(focus);
-  lampMat.color.setHex(G.night > 0.5 ? 0xffe2a0 : 0x888877);
+  lampMat.color.setScalar(0.45 + 0.75 * sstep(0.3, 0.7, G.night));
+  updateDressing(dt);
   G.cloudMat.opacity = 0.25 + day * 0.65;
   clouds.position.x = (G.time * 3) % 1000;
   G.uniforms.uTime.value = G.time;
@@ -1122,5 +1423,6 @@ export function buildWorld(scene) {
   buildAirports(scene);
   buildRamps(scene);
   buildDecor(scene);
+  buildDressing(scene);
   flushBoxes(scene);
 }
