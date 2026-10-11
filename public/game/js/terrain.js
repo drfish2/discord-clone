@@ -121,9 +121,43 @@ function smoothRoadPoints(p, br) {
   return a;
 }
 
+// Airfield footprints (runways, plus apron/terminal/hangars on the inland side, mirroring
+// genAirports' layout). The map's road graph ignores the airports, so some roads ran
+// straight across runways and aprons; those junction-to-junction roads are dropped
+// (traffic turns back at the resulting dead ends).
+function airportKeepout() {
+  const zones = [];
+  for (const ap of W.airports) {
+    const big = ap.key === 'east' || ap === W.airports[0];
+    const r = ap.runways[0];
+    const L = Math.hypot(r.x1 - r.x0, r.z1 - r.z0), dx = (r.x1 - r.x0) / L, dz = (r.z1 - r.z0) / L;
+    const tx = (r.x0 + r.x1) / 2, tz = (r.z0 + r.z1) / 2;
+    let side = terrainHeight(tx - dz * 160, tz + dx * 160) < terrainHeight(tx + dz * 160, tz - dx * 160) ? -1 : 1;
+    for (const r2 of ap.runways.slice(1)) {
+      const mx = (r2.x0 + r2.x1) / 2 - tx, mz = (r2.z0 + r2.z1) / 2 - tz;
+      if ((-dz * mx + dx * mz) * side > 0) side = -side;
+    }
+    const nx = -dz * side, nz = dx * side;
+    // terminal side: apron, terminal, tower and hangars (up to ~390 m along from mid-runway)
+    zones.push({ cx: tx, cz: tz, ax: dx, az: dz, a0: -Math.max(Math.min(L * 0.7, 600) / 2, big ? 420 : 260), a1: Math.max(Math.min(L * 0.7, 600) / 2, big ? 420 : 260), nx, nz, n0: 0, n1: big ? 205 : 185 });
+    for (const rw of ap.runways) {
+      const l = Math.hypot(rw.x1 - rw.x0, rw.z1 - rw.z0), ux = (rw.x1 - rw.x0) / l, uz = (rw.z1 - rw.z0) / l;
+      zones.push({ cx: rw.x0, cz: rw.z0, ax: ux, az: uz, a0: -60, a1: l + 60, nx: -uz, nz: ux, n0: -(rw.w / 2 + 25), n1: rw.w / 2 + 25 });
+    }
+  }
+  return (x, z) => zones.some((q) => {
+    const px = x - q.cx, pz = z - q.cz, a = px * q.ax + pz * q.az, n = px * q.nx + pz * q.nz;
+    return a > q.a0 && a < q.a1 && n > q.n0 && n < q.n1;
+  });
+}
+
 function buildRoads() {
   const J = W.nodes.map(([x, z, h]) => addNode(x, z, h));
+  const inAirport = airportKeepout();
   for (const r of W.roads) {
+    let cross = false;
+    for (let k = 0; k < r.p.length && !cross; k += 3) if (!r.br[k / 3] && inAirport(r.p[k], r.p[k + 1])) cross = true;
+    if (cross) continue;
     const p = smoothRoadPoints(r.p, r.br);
     const n = p.length / 3;
     const list = [J[r.a]];
@@ -628,6 +662,11 @@ function airportHeight(x, z) {
     }
   }
   return null;
+}
+// on (or within pad m of) a runway, apron or taxiway slab
+export function onAirportSlab(x, z, pad = 2) {
+  if (airportHeight(x, z) !== null) return true;
+  return pad > 0 && (airportHeight(x + pad, z) !== null || airportHeight(x - pad, z) !== null || airportHeight(x, z + pad) !== null || airportHeight(x, z - pad) !== null);
 }
 export function inAirfield(x, z, pad = 0) {
   for (const ap of AIRPORTS) {

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { G, clamp, sstep, WATER } from './core.js';
 import {
-  H, TN, TS, HALF, BIOMES, biomeAt, urbanAt, terrainHeight, nearestRoad, buildingsNear, inAirfield,
+  H, TN, TS, HALF, BIOMES, biomeAt, urbanAt, terrainHeight, nearestRoad, buildingsNear, inAirfield, onAirportSlab,
 } from './terrain.js';
 import { noise2, mulberry32 } from './noise.js';
 import { inlineData } from './assets.js'; // CSP-safe embedded buffers/images (artifact host)
@@ -411,7 +411,7 @@ function genGrassChunk(ci, cj) {
     if (r1 > keep) continue;
     if (slopeAt(x, z) > 0.7) continue;
     if (!openGround(x, z, 0.25)) continue;
-    if (inAirfield(x, z, -150)) continue;
+    if (inAirfield(x, z, -150) || onAirportSlab(x, z)) continue;
     const s = 0.7 + r2 * 0.6;
     M.compose(P.set(x, h - 0.03, z), Q.setFromAxisAngle(UP, r3 * 6.283), S.set(s, s * (0.75 + r1 * 0.6), s));
     M.toArray(m, k * 16);
@@ -493,7 +493,7 @@ function genPlantChunk(ci, cj) {
       }
       if (pick < 0) continue;
       const K = kinds[pick];
-      if (inAirfield(x, z, -150)) continue;
+      if (inAirfield(x, z, -150) || onAirportSlab(x, z)) continue;
       if (!openGround(x, z, K.name === 'rock' ? 1.2 : 0.5)) continue;
       if (slopeAt(x, z) > (K.name === 'rock' ? 1.2 : 0.65)) continue;
       const vi = Math.floor(r2 * K.variants.length);
