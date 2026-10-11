@@ -201,10 +201,11 @@ export function segsAt(x, z) {
   return segGrid.get(gk(Math.floor(x / SG), Math.floor(z / SG)));
 }
 // projection result scratch
-export const RP = { d: 0, h: 0, t: 0, s: null, side: 0 };
+export const RP = { d: 0, h: 0, t: 0, s: null, side: 0, cap: false };
 function proj(s, x, z) {
   const px = x - s.a.x, pz = z - s.a.z;
   let t = px * s.dx + pz * s.dz;
+  RP.cap = t < 0 || t > s.len; // past an end: the round cap around the end node
   t = clamp(t, 0, s.len);
   const cx = s.a.x + s.dx * t, cz = s.a.z + s.dz * t;
   RP.d = Math.hypot(x - cx, z - cz);
@@ -235,16 +236,26 @@ export function nearestRoad(x, z) {
 export function roadAt(x, z, maxY = Infinity) {
   const l = segsAt(x, z);
   if (!l) return null;
-  let h = null, hp = null;
+  // Strip hits (alongside a segment) beat cap hits (the round ends around its nodes). On a
+  // slope the next segment's cap holds the higher node's height and reaches ~w/2 m back over
+  // this segment; taking the max made a 0.4-0.6 m step every node on every climb (bridges
+  // were unusable). Caps now only fill gaps, e.g. the outside corner of a bend or junction.
+  let h = null, hc = null, hp = null, hpc = null;
   for (const s of l) {
     proj(s, x, z);
     if (RP.d < s.w / 2 + 0.3) {
-      if (RP.h <= maxY && (h === null || RP.h > h)) h = RP.h;
+      if (RP.h > maxY) continue;
+      if (!RP.cap) { if (h === null || RP.h > h) h = RP.h; }
+      else if (hc === null || RP.h > hc) hc = RP.h;
     } else if (s.sidewalk && RP.d < s.w / 2 + SIDEWALK) {
       const y = RP.h + CURB;
-      if (y <= maxY && (hp === null || y > hp)) hp = y;
+      if (y > maxY) continue;
+      if (!RP.cap) { if (hp === null || y > hp) hp = y; }
+      else if (hpc === null || y > hpc) hpc = y;
     }
   }
+  if (h === null) h = hc;
+  if (hp === null) hp = hpc;
   // a pavement well above the carriageway is a different level (bridge over a road)
   if (h === null || (hp !== null && hp > h + 1)) return hp;
   return h;
@@ -1041,6 +1052,35 @@ function fitRoadsToAirports() {
   }
 }
 
+// Limit road grades. Some bridge decks end in a 50 % drop to the road (17.6 m to 10 m in
+// 15 m), which no car drives smoothly. Raise the lower side into a <= MAX_GRADE ramp that
+// meets the deck (raising, never lowering, so decks keep clear of what's underneath), by at
+// most MAX_RAISE m. Junction nodes are shared, so repeat until neighbours agree.
+const MAX_GRADE = 0.12, MAX_RAISE = 8;
+function limitRoadGrades() {
+  const h0 = new Map(nodes.map((n) => [n, n.h]));
+  for (let pass = 0; pass < 6; pass++) {
+    let changed = false;
+    for (const road of roads) {
+      const L = road.nodes, S = road.segs;
+      if (S.length !== L.length - 1) continue;
+      for (const dir of [1, -1]) {
+        const i0 = dir > 0 ? 1 : L.length - 2, i1 = dir > 0 ? L.length : -1;
+        for (let i = i0; i !== i1; i += dir) {
+          const n = L[i], prev = L[i - dir], len = S[dir > 0 ? i - 1 : i].len;
+          const need = prev.h - MAX_GRADE * len;
+          if (n.h < need) {
+            const cap = h0.get(n) + MAX_RAISE;
+            const nh = Math.min(need, cap);
+            if (nh > n.h + 1e-3) { n.h = nh; changed = true; }
+          }
+        }
+      }
+    }
+    if (!changed) break;
+  }
+}
+
 // Pull the terrain down around roads. The compiled heightfield blends the 15 m
 // grid with the roads' own height profile imperfectly: in ~1.7 % of road-surface
 // samples the terrain pokes up through the road (up to ~5 m — the "bumpy /
@@ -1233,6 +1273,7 @@ export function generateWorldData() {
   REGIONS = W.regions;
   buildRoads();
   fitRoadsToAirports();
+  limitRoadGrades();
   carveRoadShoulders();
   regSegs();
   genAirports();
