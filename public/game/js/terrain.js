@@ -98,10 +98,33 @@ function link(a, b, w, kind, road, bridge) {
 }
 const KIND = { main: 'main', street: 'city', rural: 'rural' };
 
+// Road centrelines are traced from a raster map, one point every ~12 m, and jitter by
+// ~6 deg per point (1.6k kinks over 30 deg): roads read as zig-zags. Relax interior points
+// toward their neighbours, a few metres at most, with junction ends and bridge points pinned
+// so the graph and the bridge decks don't move. Heights are smoothed with the positions.
+const SMOOTH_ITERS = 12, SMOOTH_MAX = 6; // iterations; max sideways move (m)
+function smoothRoadPoints(p, br) {
+  const n = p.length / 3;
+  if (n < 3) return p;
+  const pin = (k) => k === 0 || k === n - 1 || br[k];
+  const o = p.slice();
+  let a = p.slice(), b = p.slice();
+  for (let it = 0; it < SMOOTH_ITERS; it++) {
+    for (let k = 1; k < n - 1; k++) {
+      if (pin(k)) continue;
+      for (let c = 0; c < 3; c++) b[k * 3 + c] = 0.25 * a[(k - 1) * 3 + c] + 0.5 * a[k * 3 + c] + 0.25 * a[(k + 1) * 3 + c];
+      const dx = b[k * 3] - o[k * 3], dz = b[k * 3 + 1] - o[k * 3 + 1], d = Math.hypot(dx, dz);
+      if (d > SMOOTH_MAX) { b[k * 3] = o[k * 3] + (dx / d) * SMOOTH_MAX; b[k * 3 + 1] = o[k * 3 + 1] + (dz / d) * SMOOTH_MAX; }
+    }
+    [a, b] = [b, a];
+  }
+  return a;
+}
+
 function buildRoads() {
   const J = W.nodes.map(([x, z, h]) => addNode(x, z, h));
   for (const r of W.roads) {
-    const p = r.p;
+    const p = smoothRoadPoints(r.p, r.br);
     const n = p.length / 3;
     const list = [J[r.a]];
     for (let k = 1; k < n - 1; k++) list.push(addNode(p[k * 3], p[k * 3 + 1], p[k * 3 + 2]));
