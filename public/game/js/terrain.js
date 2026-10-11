@@ -471,7 +471,15 @@ function genStreets() {
       }
     });
   }
-  // traffic lights on two corners of busy town junctions
+  // traffic lights on two corners of busy town junctions. The corner spot is worked out
+  // from one road only, so at angled or wide junctions it can land on a neighbouring
+  // road: check every candidate against all carriageways (plus a margin) and fall back
+  // to the other side / further back, or skip the light.
+  const onCarriageway = (x, z) => {
+    const l = segsAt(x, z);
+    if (l) for (const s of l) { proj(s, x, z); if (RP.d < s.w / 2 + 1.2) return true; }
+    return false;
+  };
   for (const n of junctions) {
     const city = n.edges.filter((e) => e.s.kind !== 'rural');
     if (city.length < 3) continue;
@@ -479,8 +487,16 @@ function genStreets() {
       const e = city[k];
       const w = e.s.w / 2 + SIDEWALK - 0.7;
       const dx = (e.n.x - n.x) / e.s.len, dz = (e.n.z - n.z) / e.s.len;
-      const x = n.x + dx * (w + 1) - dz * w, z = n.z + dz * (w + 1) + dx * w;
-      props.push({ file: 'kk_trafficlight_A', x, y: n.h + CURB, z, rot: Math.atan2(-dx, -dz), h: 5.2, col: 0.25 });
+      let spot = null;
+      for (const back of [1, 4, 8]) {
+        for (const side of [1, -1]) {
+          const x = n.x + dx * (w + back) - dz * w * side, z = n.z + dz * (w + back) + dx * w * side;
+          if (!onCarriageway(x, z)) { spot = { x, z }; break; }
+        }
+        if (spot) break;
+      }
+      if (!spot) continue;
+      props.push({ file: 'kk_trafficlight_A', x: spot.x, y: groundHeight(spot.x, spot.z, n.h + 2), z: spot.z, rot: Math.atan2(-dx, -dz), h: 5.2, col: 0.25 });
     }
   }
   for (const l of lamps) regCollider({ t: 1, x: l.x, z: l.z, r: 0.25, y0: l.y - 1, y1: l.y + 7 }, l.x - 1, l.x + 1, l.z - 1, l.z + 1);
