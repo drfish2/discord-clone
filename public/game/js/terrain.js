@@ -4,6 +4,7 @@
 // No rendering here; world.js turns this data into meshes.
 import { clamp, lerp, sstep, WATER } from './core.js';
 import { noise2, mulberry32 } from './noise.js';
+import { STYLES, STYLE, ZONE_STYLE, wpick } from './districts.js';
 
 export let HALF = 6187.5; // map spans -HALF..HALF on x and z
 export let TS = 15; // terrain grid spacing (m)
@@ -394,6 +395,7 @@ function addTree(x, z, type, s) {
   }
 }
 
+const hash01 = (x, z) => { const v = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return v - Math.floor(v); };
 const PALETTE = {
   down: [0x8fa3b8, 0x6f8499, 0xb8c4cc, 0x5d7085, 0xc9c2b0, 0x9aa7a0, 0x7b8fa6, 0xa9b5bf],
   mid: [0xe8c872, 0xdcd3c0, 0xc96f4a, 0xb0c4d8, 0xece6d6, 0xd9a066, 0xa4593c, 0xd8cfa8, 0x9fb3a0],
@@ -406,12 +408,20 @@ const KK_KEYS = Object.keys(KK);
 // ---------------------------------------------------------------- buildings from the compiled lots
 // Facade types read by world.js buildingMaterial(): every window, door and storey is sized in
 // metres there, so a building only has to say what it is made of and what its ground floor is.
-export const FAC = { BRICK: 0, PLASTER: 1, OFFICE: 2, GLASS: 3, HOUSE: 4, HOSPITAL: 5, SHED: 6, CIVIC: 7, PLAIN: 8 };
+export const FAC = {
+  BRICK: 0, PLASTER: 1, OFFICE: 2, GLASS: 3, HOUSE: 4, HOSPITAL: 5, SHED: 6, CIVIC: 7, PLAIN: 8,
+  DECO: 9, ADOBE: 10, INDUSTRIAL: 11, CLAPBOARD: 12, CHALET: 13, VILLA: 14, TENEMENT: 15, MISSION: 16, TENEMENT_STUCCO: 17,
+};
 export const GF = { HOME: 0, SHOP: 1, LOBBY: 2, GARAGE: 3 };
 const BRICKS = [0xa4553c, 0x8e4a35, 0xb06a4c, 0x7d4434, 0xc49a6c, 0x9b5b45, 0xb5876a];
 // a separate stream so the shared world RNG (streets, nature, missions) sees the same draws as before
 const RB = mulberry32(19870311);
-const pick = (a) => a[Math.floor(RB() * a.length)];
+// RX: the stream facade seeds and style picks draw from. genBuildings points it at its own style
+// stream (RS) and replays the original RB draws itself, so lot layouts (and every tree, prop and
+// fence placed around them) come out exactly as before the district styles existed.
+let RX = RB;
+const RS = mulberry32(31337);
+const pick = (a) => a[Math.floor(RX() * a.length)];
 // street level in front of a lot (facade grids start here, not at the buried foundation)
 function frontGround(cx, cz, hz, rot) {
   const fx = Math.sin(rot), fz = Math.cos(rot);
@@ -421,7 +431,7 @@ function facade(b, type, gf, blank = 0) {
   b.fac = type;
   b.gf = gf;
   b.blank = blank; // bit 1: left side is a party wall, bit 2: right side
-  b.seed = RB();
+  b.seed = RX();
   b.gy = clamp(frontGround(b.cx, b.cz, b.hz, b.rot), b.y0 + 0.4, b.y1 - 2.5);
   return b;
 }
@@ -429,9 +439,9 @@ function facade(b, type, gf, blank = 0) {
 function roofHouse(b) {
   const w = Math.min(b.hx, 3.2) * 0.8, d = Math.min(b.hz, 3) * 0.8;
   if (b.hx < 4 || b.hz < 4) return;
-  const u = (RB() - 0.5) * (b.hx - w - 1.2) * 2, v = (RB() - 0.5) * (b.hz - d - 1.2) * 2;
+  const u = (RX() - 0.5) * (b.hx - w - 1.2) * 2, v = (RX() - 0.5) * (b.hz - d - 1.2) * 2;
   const x = b.cx + u * b.c + v * b.s, z = b.cz - u * b.s + v * b.c;
-  const r = addBox(x, z, w, d, b.rot + (RB() < 0.5 ? 0 : Math.PI), 2.7, 0xb9b4aa, 'roof', null, b.y1);
+  const r = addBox(x, z, w, d, b.rot + (RX() < 0.5 ? 0 : Math.PI), 2.7, 0xb9b4aa, 'roof', null, b.y1);
   (b.kids = b.kids || []).push(r);
   facade(r, FAC.PLAIN, GF.HOME);
   r.gy = b.y1;
@@ -465,13 +475,122 @@ function storeyHeight(target, gf, sh) {
   const n = clamp(Math.round((target - gf - 0.6) / sh), 1, 40);
   return gf + n * sh + 0.6;
 }
+// ---------------------------------------------------------------- district styles
+// Every 30 m cell gets a district identity (districts.js STYLES) from the same rules as
+// zoneName(): gang turf, then regions, then the nearest district in town, then the biome.
+// The lookup point is pushed around by noise so neighbourhoods blend over ~100 m.
+let SGRID = new Uint8Array(0);
+function zoneStyleKey(x, z) {
+  for (const g of GANGS) if (Math.hypot(x - g.x, z - g.z) < g.r) return g.id === 'kingz' ? 'kingz' : 'vipers';
+  for (const r of REGIONS) if (Math.hypot(x - r.x, z - r.z) < r.r) return ZONE_STYLE[r.name] || 'farm';
+  let best = null, bd = Infinity;
+  for (const d of DISTRICTS) {
+    const dd = Math.hypot(x - d.x, z - d.z);
+    if (dd < bd) { bd = dd; best = d; }
+  }
+  const b = biomeAt(x, z);
+  if (best && (urbanAt(x, z) > 0.15 || bd < 700 || b === BIOMES.BEACH)) return ZONE_STYLE[best.name] || 'farm';
+  if (b === BIOMES.DESERT) return 'desert';
+  if (b === BIOMES.WETLAND) return 'marsh';
+  if (b === BIOMES.ALPINE) return 'alpine';
+  return 'farm';
+}
+function buildStyleGrid() {
+  SGRID = new Uint8Array(BN * BN);
+  const f = (2 * HALF) / (BN - 1);
+  for (let j = 0; j < BN; j++)
+    for (let i = 0; i < BN; i++) {
+      const x = -HALF + i * f, z = -HALF + j * f;
+      const jx = x + noise2(x * 0.004, z * 0.004) * 110, jz = z + noise2(x * 0.004 + 31.7, z * 0.004 + 11.3) * 110;
+      SGRID[j * BN + i] = STYLE[zoneStyleKey(jx, jz)] ?? STYLE.farm;
+    }
+}
+// style index / style object at a point
+export function styleAt(x, z) {
+  return SGRID[gridIdx(x, z)] || 0;
+}
+export function styleOf(x, z) {
+  return STYLES[styleAt(x, z)];
+}
+// 0..1: how close to the financial core (the first compiled downtown) a point is
+function coreAt(x, z) {
+  const d = W.downtowns && W.downtowns[0];
+  if (!d) return 0;
+  return clamp(1 - Math.hypot(x - d[0], z - d[1]) / 750, 0, 1);
+}
+const palOf = (spec, type) => (Array.isArray(spec.pal) ? spec.pal : spec.pal[type] || Object.values(spec.pal)[0]);
+// storey heights (m) per facade type
+const STOREY = { 2: 3.6, 3: 3.9, 4: 2.9, 12: 2.9, 13: 2.9, 14: 3.3, 11: 4.2 };
+// pitched roof from a style's roof spec (b.roof colour, b.roofType, b.pitch)
+function styleRoof(b, spec, type) {
+  const r = (spec.roofFac && spec.roofFac[type]) || spec.roof;
+  if (!r || RX() >= r.p) return false;
+  b.roof = pick(r.pal);
+  b.roofType = r.alt && RX() < 0.35 ? r.alt : r.type;
+  b.pitch = r.pitch;
+  return true;
+}
+
+// Street dressing generated with the buildings and in genDressing(): simple primitives that
+// world.js / dressing.js instance by kind. {k:'box'|'cyl'|'cone'|'sphere'|'container'|'bill'|'blade',
+// x,y,z (centre), sx,sy,sz (full size; cyl/cone: sx = diameter), ry (and optional rx, rz),
+// c (colour), glow (night emissive), far (never distance culled), ad (billboard image)}
+export const kit = [];
+function kitAdd(k, x, y, z, sx, sy, sz, ry, c, extra) {
+  const o = { k, x, y, z, sx, sy, sz, ry, c };
+  if (extra) Object.assign(o, extra);
+  kit.push(o);
+  return o;
+}
+// local (u along the front, v towards the street) to world, for a building b
+const bLocal = (b, u, v) => [b.cx + u * b.c + v * b.s, b.cz - u * b.s + v * b.c];
+const NEON = [0xff3fa4, 0x29e0ff, 0xffe14a, 0x7dff6a, 0xff6a2a, 0xb06aff];
+
+// rooftop bits: wooden water tanks (Kingsbay), AC units (Eastgate)
+function roofClutter(b, kind) {
+  if (b.hx < 3.5 || b.hz < 3.5) return;
+  const top = b.y1;
+  if (kind === 'tanks' && RX() < 0.42) {
+    const [x, z] = bLocal(b, (RX() - 0.5) * (b.hx - 2.5), -(RX() * 0.5) * (b.hz - 2.5));
+    const r = 1.5 + RX() * 0.6, legs = 2.6, hh = 3.4;
+    for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) kitAdd('box', x + lx * r * 0.6, top + legs / 2, z + lz * r * 0.6, 0.18, legs, 0.18, 0, 0x3a3634);
+    kitAdd('cyl', x, top + legs + hh / 2, z, r * 2, hh, r * 2, 0, 0x7a5a3e, { tank: 1 });
+    kitAdd('cone', x, top + legs + hh + 0.6, z, r * 2.15, 1.2, r * 2.15, 0, 0x4a4440);
+    regCollider({ t: 1, x, z, r: r + 0.1, y0: top, y1: top + legs + hh + 1.2 }, x - r - 1, x + r + 1, z - r - 1, z + r + 1);
+  } else if (kind === 'ac') {
+    const n = 1 + Math.floor(RX() * 3);
+    for (let k = 0; k < n; k++) {
+      const [x, z] = bLocal(b, (RX() - 0.5) * (b.hx - 2), (RX() - 0.5) * (b.hz - 2));
+      kitAdd('box', x, top + 0.6, z, 1.4, 1.2, 1.0, b.rot, 0x9a9c9e);
+    }
+  }
+}
+// a vertical neon blade sign on a shopfront corner (overhead, no collider)
+function bladeSign(b) {
+  const sg = RX() < 0.5 ? -1 : 1;
+  const hgt = Math.min(6.5, b.y1 - b.gy - 5.2);
+  if (hgt < 2 || b.hx < 2.5) return;
+  const [x, z] = bLocal(b, sg * (b.hx - 0.7), b.hz + 0.55);
+  kitAdd('blade', x, b.gy + 4.4 + hgt / 2, z, 0.18, hgt, 1.0, b.rot, pick(NEON), { glow: 1 });
+}
+
 function genBuildings() {
+  // Layout (lot splitting, setbacks, which lots are skipped) replays the original RB draws one
+  // for one; what each building looks like comes from the district style and the RS stream.
+  RX = RS;
   for (const [cx, cz, hx, hz, rot, h, style] of W.buildings) {
     if (style === 0) {
       R();
-      const glass = RB() < 0.55;
-      const b = addBox(cx, cz, hx, hz, rot, storeyHeight(h, 5, glass ? 3.9 : 3.6), glass ? pick(PALETTE.down) : pick([0xcfc8bb, 0xb8b2a6, 0xd9d2c3, 0x9ea4a8, 0xc2b59b]), 'tower');
-      facade(b, glass ? FAC.GLASS : FAC.OFFICE, GF.LOBBY);
+      RB(); RB(); RB(); // original: glass?, colour, facade seed
+      const st = styleOf(cx, cz), T = st.tower;
+      const type = wpick(T.fac, RX());
+      const core = st.key === 'downtown' ? coreAt(cx, cz) : 0;
+      const hm = T.hMul * (1 + core * 0.9);
+      const sh = STOREY[type] || 3.3;
+      const b = addBox(cx, cz, hx, hz, rot, storeyHeight(Math.max(9, h * hm), 5, sh), pick(palOf(T, type)), 'tower');
+      facade(b, type, type === FAC.OFFICE || type === FAC.GLASS ? GF.LOBBY : GF.SHOP);
+      b.awn = pick(st.awn);
+      if (st.blk.clutter === 'plant' || b.y1 - b.y0 > 30) roofHouse(b);
     } else if (style === 1) {
       for (let k = 0; k < KK_KEYS.length; k++) R();
       // a row of narrower units across the lot instead of one blown-up building
@@ -481,37 +600,62 @@ function genBuildings() {
       for (let i = 1; i < n; i++) cuts.push((i + (RB() - 0.5) * 0.3) / n);
       cuts.push(1);
       const c = Math.cos(rot), s = Math.sin(rot);
+      // warehouses, strip malls and adobe stores read as one building across the whole lot:
+      // their units share type, colour and height (party walls stay blank)
+      const lot = { t: RX(), c: RX(), h: RX(), g: RX() };
       for (let i = 0; i < n; i++) {
         const u0 = -hx + cuts[i] * w, u1 = -hx + cuts[i + 1] * w;
         const uw = (u1 - u0) / 2, um = (u0 + u1) / 2;
         // some units sit a little back from the frontage, which breaks up the street wall
         const clear = frontClearance(cx + um * c, cz - um * s, uw, hz, rot);
         const back = Math.max(RB() < 0.25 ? Math.min(1.5, hz * 0.15) : 0, clear);
-        const ucx = cx + um * c - (back / 2) * s, ucz = cz - um * s - (back / 2) * c;
-        const shop = RB() < 0.78;
-        const brick = RB() < 0.48;
-        const type = brick ? FAC.BRICK : RB() < 0.85 ? FAC.PLASTER : FAC.OFFICE;
-        const gf = shop ? 4.4 : 3.5;
-        const ht = storeyHeight(clamp(h * (0.7 + RB() * 0.6), 7.5, 32), gf, type === FAC.OFFICE ? 3.6 : 3.2);
-        const col = brick ? pick(BRICKS) : type === FAC.OFFICE ? pick([0xc9c4b8, 0xb5b0a5, 0xd8d0c0]) : pick(PALETTE.mid);
+        // original draws: shop?, brick?, (plaster or office?), height, colour
+        RB(); if (RB() >= 0.48) RB(); RB(); RB();
         if (clear < 0) continue;
+        RB(); // original facade seed
+        const origRoofHouse = RB() < 0.45;
+        if (origRoofHouse && uw >= 4 && hz - back / 2 >= 4) { RB(); RB(); RB(); RB(); } // original roof housing
+        const ucx = cx + um * c - (back / 2) * s, ucz = cz - um * s - (back / 2) * c;
+        const st = styleOf(ucx, ucz), B = st.blk;
+        const one = B.units === 1;
+        const type = wpick(B.fac, one ? lot.t : RX());
+        const rs = one ? lot.g : RX();
+        const gfk = rs < B.shop ? GF.SHOP : rs < B.shop + (B.garage || 0) ? GF.GARAGE : rs < B.shop + (B.lobby || 0) ? GF.LOBBY : GF.HOME;
+        const gf = gfk === GF.SHOP ? 4.4 : gfk === GF.HOME ? 3.5 : 5;
+        const core = st.key === 'downtown' ? coreAt(ucx, ucz) : 0;
+        const target = lerp(B.h[0], B.h[1], one ? lot.h : RX()) + core * core * lerp(20, 75, RX());
+        const ht = type === FAC.SHED ? target : storeyHeight(clamp(target, 4.6, 130), gf, STOREY[type] || 3.2);
+        const pal = palOf(B, type);
+        const col = one ? pal[Math.floor(lot.c * pal.length)] : pick(pal);
         const b = addBox(ucx, ucz, uw, hz - back / 2, rot, ht, col, 'block');
-        facade(b, type, shop ? GF.SHOP : GF.HOME, (i > 0 ? 1 : 0) | (i < n - 1 ? 2 : 0));
-        if (RB() < 0.45) roofHouse(b);
+        facade(b, type, gfk, (i > 0 ? 1 : 0) | (i < n - 1 ? 2 : 0));
+        b.awn = pick(st.awn);
+        if (!styleRoof(b, B, type)) {
+          if (B.clutter === 'tanks' || B.clutter === 'ac') roofClutter(b, B.clutter);
+          if (!one && RX() < (B.clutter === 'plant' ? 0.8 : 0.45)) roofHouse(b);
+        }
+        if (st.neon && gfk === GF.SHOP && RX() < st.neon) bladeSign(b);
+        if (st.roofBill && !b.roof && RX() < st.roofBill) b.roofBill = 1 + Math.floor(RX() * 8);
       }
     } else {
       const des = biomeAt(cx, cz) === BIOMES.DESERT;
-      const pal = des ? PALETTE.desert : PALETTE.res;
       R();
       if (!des) R();
-      // detached houses: two storeys (sometimes one or three) of 2.9 m
-      const fl = h < 5.8 ? 1 : h > 8.4 ? 3 : 2;
+      let fl = h < 5.8 ? 1 : h > 8.4 ? 3 : 2;
       const back = frontClearance(cx, cz, hx, hz, rot);
       if (back < 0) continue;
-      const b = addBox(cx - Math.sin(rot) * back / 2, cz - Math.cos(rot) * back / 2, hx, hz - back / 2, rot, 0.4 + fl * 2.9, pick(pal), 'house', des ? null : pick(ROOFS));
-      facade(b, FAC.HOUSE, GF.HOME);
+      RB(); if (!des) RB(); RB(); // original: wall colour, roof colour, facade seed
+      // detached houses: two storeys (sometimes one or three), or what the district builds
+      const st = styleOf(cx, cz), Hs = st.house;
+      const type = wpick(Hs.fac, RX());
+      if (Hs.floors) fl = clamp(fl, Hs.floors[0], Hs.floors[1]);
+      const sh = STOREY[type] || 3.2;
+      const b = addBox(cx - Math.sin(rot) * back / 2, cz - Math.cos(rot) * back / 2, hx, hz - back / 2, rot, 0.4 + fl * sh, pick(palOf(Hs, type)), 'house');
+      facade(b, type, GF.HOME);
+      if (!des) styleRoof(b, Hs, type);
     }
   }
+  RX = RB;
 }
 
 // ---------------------------------------------------------------- street furniture
@@ -529,7 +673,9 @@ function genStreets() {
         const off = s.w / 2 + SIDEWALK - 0.6;
         const x = s.a.x + s.dx * s.len * 0.5 - s.dz * off * side, z = s.a.z + s.dz * s.len * 0.5 + s.dx * off * side;
         const y = (s.a.h + s.b.h) / 2 + CURB;
-        lamps.push({ x, y, z, dir: Math.atan2(s.dz * side, -s.dx * side) });
+        const st = styleAt(x, z), S = STYLES[st];
+        // run-down districts lose some lamps (deterministic, no shared RNG draw)
+        if (!(S.lampSkip && hash01(x, z) < S.lampSkip)) lamps.push({ x, y, z, dir: Math.atan2(s.dz * side, -s.dx * side), st });
       }
       if (R() < 0.05) {
         const side = R() < 0.5 ? 1 : -1, off = s.w / 2 + SIDEWALK - 0.8;
@@ -728,13 +874,22 @@ function genNature() {
       if (b === BIOMES.WETLAND) { addTree(jx, jz, R() < 0.6 ? 'bush' : 'round', rr(0.8, 1.3)); continue; }
       addTree(jx, jz, R() < 0.62 ? 'round' : R() < 0.35 ? 'pine' : 'bush', rr(0.8, 1.4));
     }
-  // street trees in town: along pavements, between lamps
+  // street trees in town: along the kerb edge of the pavement (clear of the walking line), between
+  // lamps. (The old check compared the kerb distance with the road half width, so it never passed
+  // and no street tree was ever planted; this is the last shared-RNG user, so fixing it moves nothing.)
   for (const s of segs) {
     if (!s.sidewalk || s.kind === 'main' || R() > 0.22) continue;
-    const side = R() < 0.5 ? 1 : -1, off = s.w / 2 + SIDEWALK - 1.1;
+    const side = R() < 0.5 ? 1 : -1, off = s.w / 2 + 0.75;
     const t = rr(0.2, 0.8);
     const x = s.a.x + s.dx * s.len * t - s.dz * off * side, z = s.a.z + s.dz * s.len * t + s.dx * off * side;
-    if (okForProp(x, z, s.w / 2 + SIDEWALK - 1.6)) addTree(x, z, 'round', rr(0.8, 1.0));
+    const nr = nearestRoad(x, z);
+    if (nr && nr.d > 0.6 && clearOf(x, z, 1.4) && !onCrossing(x, z)) {
+      // the species follows the district (the size draw stays, so the shared RNG doesn't drift)
+      const sc = rr(0.8, 1.0), tt = styleOf(x, z).tree;
+      if (tt === 'palm') addTree(x, z, 'palm', sc * 1.1);
+      else if (tt === 'pine') addTree(x, z, 'pine', sc * 0.8);
+      else if (tt === 'round') addTree(x, z, 'round', sc);
+    }
   }
 }
 
@@ -778,7 +933,7 @@ function shapeShores() {
 export const fences = [];
 export const FENCE = {
   picket: { h: 1.0, t: 0.08 }, privacy: { h: 1.5, t: 0.08 }, hedge: { h: 1.35, t: 0.85 }, brick: { h: 0.9, t: 0.3 },
-  stone: { h: 0.85, t: 0.55 }, rail: { h: 1.15, t: 0.12 }, adobe: { h: 1.05, t: 0.35 },
+  stone: { h: 0.85, t: 0.55 }, rail: { h: 1.15, t: 0.12 }, adobe: { h: 1.05, t: 0.35 }, chain: { h: 1.9, t: 0.06 },
 };
 const fGrid = new Map(); // 4 m cells -> panels, to drop near-duplicate parallel panels of neighbouring lots
 function fenceDup(x, z, ux, uz) {
@@ -854,12 +1009,14 @@ function genFences() {
   for (const [cx, cz, hx, hz, rot, , style] of W.buildings) {
     if (style === 0) continue;
     const u = urbanAt(cx, cz);
-    if (style === 1 && u > 0.3) continue; // town centres: no garden fences
+    const fst = styleOf(cx, cz);
+    const chainTurf = fst.key === 'kingz' || fst.key === 'vipers' || fst.key === 'port' || fst.key === 'harbour';
+    if (style === 1 && u > 0.3 && !chainTurf) continue; // town centres: no garden fences (turf and docks get chain-link)
     const r0 = RF(), r1 = RF(), r2 = RF(), r3 = RF();
     if (r0 < (style === 1 ? 0.55 : 0.12)) continue; // open lots (most shops / KayKit lots stay open)
     const b = biomeAt(cx, cz);
     if (b === BIOMES.BEACH) continue;
-    const type = b === BIOMES.DESERT ? 'adobe' : r1 < 0.34 ? 'picket' : r1 < 0.6 ? 'hedge' : r1 < 0.8 ? 'brick' : 'privacy';
+    const type = b === BIOMES.DESERT && fst.key !== 'desert' ? 'adobe' : fst.fence[Math.floor(r1 * fst.fence.length)];
     const fx = Math.sin(rot), fz = Math.cos(rot); // towards the street
     const rx = Math.cos(rot), rz = -Math.sin(rot);
     const pfx = cx + fx * hz, pfz = cz + fz * hz;
@@ -875,7 +1032,7 @@ function genFences() {
         front = hz + shift;
       }
     }
-    const side = type === 'picket' || type === 'brick' ? (r3 < 0.5 ? 'privacy' : 'hedge') : type;
+    const side = type === 'picket' || type === 'brick' ? (r3 < 0.5 ? 'privacy' : 'hedge') : type === 'rail' && fst.key === 'farm' ? 'rail' : type;
     if (style === 1) continue; // KayKit lots: front only
     const back = hz + 4;
     for (const sg of [-1, 1]) addFenceRun(cx + rx * W2 * sg + fx * front, cz + rz * W2 * sg + fz * front, cx + rx * W2 * sg - fx * back, cz + rz * W2 * sg - fz * back, side);
@@ -981,6 +1138,586 @@ function genBeach() {
       }
     }
 }
+
+// ---------------------------------------------------------------- district dressing and landmarks
+// Runs last, with its own RNG, so nothing that uses the shared world RNG moves. Everything here
+// that you can bump into registers a collider shaped like what world.js / dressing.js draw.
+// LANDMARKS: big one-off structures dressing.js builds by type (shape numbers live here).
+export const LANDMARKS = [];
+// any carriageway edge within r of (x,z)
+function roadWithin(x, z, r) {
+  const i0 = Math.floor((x - r) / SG), i1 = Math.floor((x + r) / SG), j0 = Math.floor((z - r) / SG), j1 = Math.floor((z + r) / SG);
+  for (let i = i0; i <= i1; i++)
+    for (let j = j0; j <= j1; j++) {
+      const l = segGrid.get(gk(i, j));
+      if (l) for (const s of l) { proj(s, x, z); if (RP.d - s.w / 2 - (s.sidewalk ? SIDEWALK : 0) < r) return true; }
+    }
+  return false;
+}
+// near a junction (where crossings and turning cars are): keep kerbside trees away
+let jGrid = null;
+function onCrossing(x, z) {
+  if (!jGrid) {
+    jGrid = new Map();
+    for (const n of junctions) { const k = gk(Math.floor(n.x / 40), Math.floor(n.z / 40)); if (!jGrid.has(k)) jGrid.set(k, []); jGrid.get(k).push(n); }
+  }
+  const i0 = Math.floor((x - 20) / 40), i1 = Math.floor((x + 20) / 40), j0 = Math.floor((z - 20) / 40), j1 = Math.floor((z + 20) / 40);
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    const l = jGrid.get(gk(i, j));
+    if (l) for (const n of l) if (Math.hypot(n.x - x, n.z - z) < 20) return true;
+  }
+  return false;
+}
+// no collider (oriented boxes exactly, posts/trunks as circles) within r of (x,z)
+function clearOf(x, z, r) {
+  const i0 = Math.floor((x - r) / BG), i1 = Math.floor((x + r) / BG), j0 = Math.floor((z - r) / BG), j1 = Math.floor((z + r) / BG);
+  for (let i = i0; i <= i1; i++)
+    for (let j = j0; j <= j1; j++) {
+      const l = bGrid.get(gk(i, j));
+      if (l) for (const o of l) {
+        if (o.t === 0) {
+          const dx = x - o.cx, dz = z - o.cz;
+          if (Math.abs(dx * o.c - dz * o.s) < o.hx + r && Math.abs(dx * o.s + dz * o.c) < o.hz + r) return false;
+        } else if (Math.hypot(x - o.x, z - o.z) < o.r + r) return false;
+      }
+    }
+  return true;
+}
+const flatAt = (x, z, r) => {
+  const h = [terrainHeight(x - r, z - r), terrainHeight(x + r, z - r), terrainHeight(x - r, z + r), terrainHeight(x + r, z + r), terrainHeight(x, z)];
+  return Math.max(...h) - Math.min(...h);
+};
+// thin box collider (not walkable, not a sight-line blocker) at centre/half sizes/rot
+function solidBox(cx, cz, hx, hz, rot, y0, y1, thin = false) {
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  const ex = Math.abs(c) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(c) * hz;
+  const o = { t: 0, thin, kind: 'prop', cx, cz, hx, hz, rot, c, s: sn, x0: cx - ex, x1: cx + ex, z0: cz - ez, z1: cz + ez, y0, y1 };
+  regCollider(o, o.x0, o.x1, o.z0, o.z1);
+  return o;
+}
+const post = (x, z, r, y0, y1) => regCollider({ t: 1, x, z, r, y0, y1 }, x - r - 1, x + r + 1, z - r - 1, z + r + 1);
+// direction (unit) from (x,z) towards open sea within `far` m, or null
+function seaDir(x, z, near, far) {
+  let best = null;
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a);
+    let ok = true;
+    for (let d = near; d <= far; d += 10) if (terrainHeight(x + dx * d, z + dz * d) > -1.2) { ok = false; break; }
+    if (ok) { best = best || { x: 0, z: 0, n: 0 }; best.x += dx; best.z += dz; best.n++; }
+  }
+  if (!best) return null;
+  const L = Math.hypot(best.x, best.z) || 1;
+  return { x: best.x / L, z: best.z / L, n: best.n };
+}
+const styleKeyAt = (x, z) => STYLES[styleAt(x, z)].key;
+// grid scan over cells of one style: cb(x, z) for points of that style
+function scanStyle(key, step, cb, R) {
+  const id = STYLE[key];
+  for (let x = -HALF + step; x < HALF - step; x += step)
+    for (let z = -HALF + step; z < HALF - step; z += step) {
+      const jx = x + (R() - 0.5) * step * 0.6, jz = z + (R() - 0.5) * step * 0.6;
+      if (styleAt(jx, jz) !== id) continue;
+      if (cb(jx, jz) === false) return;
+    }
+}
+
+const CONTAINER_COLS = [0xb33a2a, 0x2f5f9e, 0x2f7d4a, 0xd9a02a, 0x7a7f86, 0xc75a1e, 0x1f6f7a, 0xe0e0dc, 0x5b3a7a];
+function genDressing() {
+  const RD = mulberry32(5150);
+  const rp = (a) => a[Math.floor(RD() * a.length)];
+
+  // ---- boulevard planting: palm rows on the main roads of palm districts, leafy rows on the
+  // streets of the suburbs and old-money quarters, pines in the alpine village
+  const ROWS = { palm: { main: 24 }, round: { city: 44 }, pine: { city: 50 } };
+  const leafy = new Set(['suburb', 'lakeside', 'alpine']);
+  for (const road of roads) {
+    if (road.kind === 'rural') continue;
+    let acc = RD() * 10;
+    for (const s of road.segs) {
+      if (!s.sidewalk || s.bridge) continue;
+      for (let t = acc; t < s.len; t += 4) {
+        const x0 = s.a.x + s.dx * t, z0 = s.a.z + s.dz * t;
+        const st = styleOf(x0, z0);
+        const sp = ROWS[st.tree] && ROWS[st.tree][road.kind];
+        if (!sp || (st.tree !== 'palm' && !leafy.has(st.key))) continue;
+        t += sp - 4;
+        for (const side of [1, -1]) {
+          const off = s.w / 2 + 0.75;
+          const x = x0 - s.dz * off * side, z = z0 + s.dx * off * side;
+          const nr = nearestRoad(x, z);
+          if (!nr || nr.d < 0.6 || !clearOf(x, z, 1.6) || onCrossing(x, z)) continue;
+          addTree(x, z, st.tree, st.tree === 'palm' ? 1.0 + RD() * 0.35 : st.tree === 'pine' ? 0.7 + RD() * 0.2 : 0.8 + RD() * 0.25);
+        }
+      }
+      acc = 0;
+    }
+  }
+
+  // ---- billboards beside main roads (Westwood strip, Downtown, Eastgate)
+  for (const road of roads) {
+    if (road.kind === 'rural') continue;
+    let acc = RD() * 200;
+    for (const s of road.segs) {
+      acc += s.len;
+      if (acc < 220 || s.bridge) continue;
+      const mx = (s.a.x + s.b.x) / 2, mz = (s.a.z + s.b.z) / 2;
+      const st = styleOf(mx, mz);
+      if (!st.billboards || (road.kind !== 'main' && st.key !== 'strip') || RD() > 0.45 * st.billboards) continue;
+      const side = RD() < 0.5 ? 1 : -1;
+      const off = s.w / 2 + (s.sidewalk ? SIDEWALK : 0) + 3.2;
+      const nx = -s.dz * side, nz = s.dx * side;
+      const x = mx + nx * off, z = mz + nz * off;
+      if (terrainHeight(x, z) < 1.5 || inAirfield(x, z, 20) || !clearOf(x, z, 6.5)) continue;
+      // both posts must stay off every road
+      let bad = false;
+      for (const sg of [-1, 1]) if (roadWithin(x + s.dx * 4 * sg, z + s.dz * 4 * sg, 1.2)) bad = true;
+      if (bad) continue;
+      acc = 0;
+      const y = terrainHeight(x, z) - 0.3;
+      const ry = Math.atan2(-nx, -nz); // panel (+z) faces the road
+      for (const sg of [-1, 1]) {
+        const px = x + s.dx * 4 * sg, pz = z + s.dz * 4 * sg;
+        kitAdd('cyl', px, y + 4.9, pz, 0.45, 9.8, 0.45, 0, 0x4a4d50);
+        post(px, pz, 0.3, y - 1, y + 9.8);
+      }
+      kitAdd('box', x, y + 10.2, z, 12.6, 5.4, 0.4, ry, 0x2c2e30);
+      kitAdd('bill', x - nx * 0.22, y + 10.2, z - nz * 0.22, 12, 4.9, 1, ry, 0xffffff, { ad: Math.floor(RD() * 8) });
+    }
+  }
+
+  // ---- shipping containers on the quays (Port Vale, Old Harbour)
+  let nCont = 0;
+  for (const key of ['port', 'harbour']) {
+    scanStyle(key, 14, (x, z) => {
+      if (nCont > 1100) return false;
+      const h = terrainHeight(x, z);
+      if (h < 1.6 || h > 9 || flatAt(x, z, 7) > 1.2 || RD() < 0.2) return;
+      const sea = seaDir(x, z, 50, 90);
+      if (!sea || roadWithin(x, z, 6) || inAirfield(x, z, 30) || !clearOf(x, z, 3)) return;
+      // long side along the shore, snapped to 15 degrees so neighbouring stacks line up
+      const ry = Math.round(Math.atan2(sea.x, sea.z) / (Math.PI / 12)) * (Math.PI / 12);
+      const c = Math.cos(ry), sn = Math.sin(ry);
+      // the whole 12.2 x 5.2 stack footprint has to be clear
+      for (const [u, v] of [[-6, -2.6], [6, -2.6], [-6, 2.6], [6, 2.6]]) if (!clearOf(x + u * c + v * sn, z - u * sn + v * c, 0.6)) return;
+      const n = 1 + Math.floor(RD() * (key === 'port' ? 3 : 2));
+      for (const v of [-1.3, 1.3]) {
+        const m = v < 0 ? n : Math.max(1, n - Math.floor(RD() * 2));
+        for (let k = 0; k < m; k++) {
+          kitAdd('container', x + v * sn, h - 0.1 + 1.3 + k * 2.6, z + v * c, 12.2, 2.6, 2.5, ry, rp(CONTAINER_COLS));
+          nCont++;
+        }
+      }
+      solidBox(x, z, 6.1, 2.6, ry, h - 0.6, h - 0.1 + n * 2.6);
+    }, RD);
+  }
+
+  // ---- ship-to-shore gantry cranes (Port Vale) and older dock cranes (Old Harbour)
+  for (const [key, max, scale, col] of [['port', 5, 1, 0xc8452a], ['harbour', 2, 0.72, 0x3e5a4a]]) {
+    const cands = [];
+    scanStyle(key, 18, (x, z) => {
+      const h = terrainHeight(x, z);
+      if (h < 1.5 || h > 7) return;
+      const sea = seaDir(x, z, 22 * scale, 70 * scale);
+      if (!sea || sea.n < 2) return;
+      cands.push({ x, z, h, sea, score: sea.n + RD() * 2 });
+    }, RD);
+    cands.sort((a, b) => b.score - a.score);
+    const placed = [];
+    for (const c of cands) {
+      if (placed.length >= max) break;
+      if (placed.some((p) => Math.hypot(p.x - c.x, p.z - c.z) < 95 * scale)) continue;
+      const rot = Math.atan2(c.sea.x, c.sea.z); // local +z towards the sea
+      const lx = 9 * scale, lz = 8 * scale;
+      const legs = [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]].map(([u, v]) => [c.x + u * Math.cos(rot) + v * Math.sin(rot), c.z - u * Math.sin(rot) + v * Math.cos(rot)]);
+      if (!legs.every(([x, z]) => clearOf(x, z, 1.5) && !roadWithin(x, z, 1) && terrainHeight(x, z) > 0.8)) continue;
+      placed.push(c);
+      const H = 38 * scale;
+      for (const [x, z] of legs) post(x, z, 0.9 * scale, c.h - 1, c.h + H);
+      LANDMARKS.push({ type: 'crane', x: c.x, y: Math.min(...legs.map(([x, z]) => terrainHeight(x, z))), z: c.z, rot, scale, color: col, legs, H });
+    }
+  }
+
+  // ---- dumpsters down the sides of blocks in the gritty districts
+  for (const b of buildings) {
+    if (b.kind !== 'block' || b.blank === 3) continue;
+    const st = styleOf(b.cx, b.cz);
+    if (!st.dumpsters || RD() > st.dumpsters * 0.35) continue;
+    const sg = (b.blank & 1) ? 1 : (b.blank & 2) ? -1 : RD() < 0.5 ? -1 : 1;
+    const [x, z] = bLocal(b, sg * (b.hx + 1.1), b.hz * 0.1);
+    if (!clearOf(x, z, 1.0) || roadWithin(x, z, 0.4)) continue;
+    const y = terrainHeight(x, z);
+    props.push({ file: 'kk_dumpster', x, y, z, rot: b.rot + Math.PI / 2 * sg, h: 1.35, col: 0.9 });
+    post(x, z, 0.9, y - 1, y + 1.4);
+  }
+
+  // ---- mailboxes at the kerb in front of suburban houses
+  for (const b of buildings) {
+    if (b.kind !== 'house') continue;
+    const k = styleKeyAt(b.cx, b.cz);
+    if (k !== 'suburb' && k !== 'farm' && k !== 'beachtown') continue;
+    if (k !== 'suburb' && RD() > 0.4) continue;
+    const u = b.hx * 0.55 * (RD() < 0.5 ? -1 : 1);
+    let spot = null;
+    for (let v = b.hz + 0.8; v < b.hz + 14; v += 0.5) {
+      const [x, z] = bLocal(b, u, v);
+      if (roadWithin(x, z, 0.5)) { spot = v - 0.4; break; }
+    }
+    if (spot === null || spot < b.hz + 1.2) continue;
+    const [x, z] = bLocal(b, u, spot);
+    if (!clearOf(x, z, 0.4)) continue;
+    const y = groundHeight(x, z, terrainHeight(x, z) + 1);
+    kitAdd('box', x, y + 0.55, z, 0.09, 1.1, 0.09, b.rot, 0x5a4a3a);
+    kitAdd('box', x, y + 1.18, z, 0.26, 0.26, 0.5, b.rot, rp([0x2a2d30, 0x2a4a7a, 0xb03030, 0xe8e8e0]));
+    post(x, z, 0.18, y - 0.5, y + 1.35);
+  }
+
+  // ---- desert trailers, set back from the roads
+  let nTr = 0;
+  scanStyle('desert', 26, (x, z) => {
+    if (nTr > 140) return false;
+    if (RD() > 0.4 || terrainHeight(x, z) < 2 || flatAt(x, z, 6) > 1.5) return;
+    if (roadWithin(x, z, 5) || !roadWithin(x, z, 45) || !clearOf(x, z, 7) || inAirfield(x, z, 30)) return;
+    const ry = RD() * Math.PI;
+    const y = terrainHeight(x, z);
+    const col = rp([0xf2efe6, 0xe8dcc0, 0xd8e4e8, 0xc9d6c0, 0xe6e2d6]);
+    kitAdd('box', x, y + 1.75, z, 10, 2.7, 2.6, ry, col, { trailer: 1 });
+    kitAdd('box', x + Math.sin(ry) * 1.31, y + 1.6, z + Math.cos(ry) * 1.31, 9.6, 0.35, 0.03, ry, rp([0x2a7a7a, 0xb04a2a, 0x3a5a9a, 0x8a6a2a]));
+    kitAdd('box', x - Math.sin(ry) * 1.31, y + 1.6, z - Math.cos(ry) * 1.31, 9.6, 0.35, 0.03, ry, 0x6a6a6a);
+    solidBox(x, z, 5, 1.3, ry, y - 0.5, y + 3.1);
+    nTr++;
+  }, RD);
+
+  // ---- farm belt: red barns and silos behind farmhouses
+  for (const b of buildings.slice()) {
+    if (b.kind !== 'house' || styleKeyAt(b.cx, b.cz) !== 'farm' || RD() > 0.35) continue;
+    const [x, z] = bLocal(b, (RD() - 0.5) * 6, -(b.hz + 14));
+    const rot = b.rot + Math.PI / 2;
+    if (flatAt(x, z, 9) > 2.5 || roadWithin(x, z, 10) || !clearOf(x, z, 10) || terrainHeight(x, z) < 2) continue;
+    const barn = addBox(x, z, 6, 8.5, rot, 6.5, rp([0x9a2f24, 0x8a2a22, 0xa8442e]), 'barn');
+    facade(barn, FAC.SHED, GF.GARAGE);
+    barn.roof = rp([0x5a5650, 0x4a4e54, 0x8a8e90]);
+    barn.roofType = 'gable';
+    barn.pitch = 0.75;
+    const [sx, sz] = bLocal(barn, barn.hx + 3.4, 0);
+    if (clearOf(sx, sz, 2.8)) {
+      const y = terrainHeight(sx, sz) - 0.3;
+      kitAdd('cyl', sx, y + 7.5, sz, 5, 15, 5, 0, 0xc8ccd0, { far: 1 });
+      kitAdd('sphere', sx, y + 15, sz, 5, 3.2, 5, 0, 0x9aa0a6, { far: 1 });
+      post(sx, sz, 2.55, y - 1, y + 16.5);
+    }
+  }
+
+  // ---- water towers with the town name (Northside, Red Dust Flats)
+  const nearFree = (x0, z0, r, maxR = 900) => {
+    for (let rad = 0; rad < maxR; rad += 12)
+      for (let a = 0; a < Math.PI * 2; a += Math.max(0.15, 12 / (rad + 1))) {
+        const x = x0 + Math.cos(a) * rad, z = z0 + Math.sin(a) * rad;
+        if (terrainHeight(x, z) > 2 && flatAt(x, z, r) < 3 && !roadWithin(x, z, 3) && clearOf(x, z, r) && !inAirfield(x, z, 40)) return { x, z };
+      }
+    return null;
+  };
+  const district = (name) => DISTRICTS.find((d) => d.name === name) || REGIONS.find((d) => d.name === name);
+  for (const [name, text, col, band] of [['Northside', 'NORTHSIDE', 0xdfe6ea, '#1f4f8a'], ['Red Dust Flats', 'RED DUST', 0xc9b8a0, '#8a3a1a']]) {
+    const d = district(name);
+    const p = d && nearFree(d.x, d.z, 8);
+    if (!p) continue;
+    const y = terrainHeight(p.x, p.z) - 0.3;
+    LANDMARKS.push({ type: 'watertower', x: p.x, y, z: p.z, text, color: col, band, legH: 22, r: 5.5, tankH: 7 });
+    for (const [u, v] of [[-3.6, -3.6], [3.6, -3.6], [-3.6, 3.6], [3.6, 3.6]]) post(p.x + u, p.z + v, 0.4, y - 1, y + 22);
+    regCollider({ t: 1, x: p.x, z: p.z, r: 5.6, y0: y + 21.5, y1: y + 31 }, p.x - 7, p.x + 7, p.z - 7, p.z + 7);
+  }
+
+  // ---- lighthouse at the far tip of North Isle
+  {
+    const d = district('North Isle');
+    let best = null;
+    if (d) scanStyle('fishing', 15, (x, z) => {
+      const h = terrainHeight(x, z);
+      if (h < 2.5 || h > 30 || flatAt(x, z, 4) > 3) return;
+      const sea = seaDir(x, z, 25, 60);
+      if (!sea || roadWithin(x, z, 4) || !clearOf(x, z, 5)) return;
+      const sc = Math.hypot(x - d.x, z - d.z) + sea.n * 15;
+      if (!best || sc > best.sc) best = { x, z, h, sc };
+    }, RD);
+    if (best) {
+      LANDMARKS.push({ type: 'lighthouse', x: best.x, y: best.h - 0.3, z: best.z, H: 30 });
+      post(best.x, best.z, 3.6, best.h - 1, best.h + 36);
+    }
+  }
+
+  // ---- Coral Bay pier with a ferris wheel
+  {
+    const d = district('Coral Bay');
+    let best = null;
+    if (d) scanStyle('deco', 12, (x, z) => {
+      const h = terrainHeight(x, z);
+      if (h < 0.8 || h > 2.8) return;
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a);
+        let ok = terrainHeight(x - dx * 25, z - dz * 25) > 1.2;
+        for (let t = 30; t <= 200 && ok; t += 10) {
+          if (terrainHeight(x + dx * t, z + dz * t) > -1.5) ok = false;
+          // keep the end platform clear of other land
+          if (t > 150) for (const sg of [-1, 1]) if (terrainHeight(x + dx * t - dz * 18 * sg, z + dz * t + dx * 18 * sg) > -1.5) ok = false;
+        }
+        if (!ok || roadWithin(x, z, 2) || roadWithin(x + dx * 100, z + dz * 100, 30)) continue;
+        const sc = -Math.hypot(x - d.x, z - d.z) + RD() * 50;
+        if (!best || sc > best.sc) best = { x, z, dx, dz, sc };
+      }
+    }, RD);
+    if (best) {
+      const { dx, dz } = best;
+      const rot = Math.atan2(dx, dz); // local +z out to sea
+      const deckY = 2.9, L = 170, W = 12;
+      const x0 = best.x - dx * 6, z0 = best.z - dz * 6; // starts on the sand
+      clearArea(x0 + dx * L / 2, z0 + dz * L / 2, W / 2 + 1, L / 2, rot);
+      const deck = addBox(x0 + dx * L / 2, z0 + dz * L / 2, W / 2, L / 2, rot, deckY + 8, 0x8a6a4a, 'pier', null, -8);
+      deck.hidden = true;
+      deck.fac = FAC.PLAIN;
+      // the end platform the wheel stands on
+      const pc = { x: x0 + dx * (L + 18), z: z0 + dz * (L + 18) };
+      const plat = addBox(pc.x, pc.z, 17, 20, rot, deckY + 8, 0x8a6a4a, 'pier', null, -8);
+      plat.hidden = true;
+      plat.fac = FAC.PLAIN;
+      // railings both sides (thin: you bump into them, they are not floors)
+      for (const sg of [-1, 1]) {
+        const ox = Math.cos(rot) * (W / 2 - 0.1) * sg, oz = -Math.sin(rot) * (W / 2 - 0.1) * sg;
+        solidBox(x0 + dx * L / 2 + ox, z0 + dz * L / 2 + oz, 0.08, L / 2 - 1, rot, deckY - 0.2, deckY + 1.1, true);
+        const px = Math.cos(rot) * 16.9 * sg, pz = -Math.sin(rot) * 16.9 * sg;
+        solidBox(pc.x + px, pc.z + pz, 0.08, 20, rot, deckY - 0.2, deckY + 1.1, true);
+      }
+      solidBox(pc.x + dx * 19.9, pc.z + dz * 19.9, 17, 0.08, rot, deckY - 0.2, deckY + 1.1, true);
+      // ferris wheel: axle across the platform, A-frame legs at both ends
+      const wc = { x: pc.x + dx * 4, z: pc.z + dz * 4 };
+      const R = 19, axleY = deckY + R + 3.5;
+      const feet = [];
+      for (const a of [-1, 1]) for (const b of [-1, 1]) feet.push([wc.x + dx * 3.2 * a + Math.cos(rot) * 9 * b, wc.z + dz * 3.2 * a - Math.sin(rot) * 9 * b]);
+      for (const [x, z] of feet) post(x, z, 0.6, deckY - 0.5, deckY + 8);
+      LANDMARKS.push({ type: 'pier', x: x0, z: z0, dx, dz, rot, L, W, deckY, pc, wc, R, axleY });
+    }
+  }
+
+  // ---- PINEWOOD sign on the hillside, facing Downtown
+  {
+    const reg = district('Pinewood Hills'), dt = district('Downtown');
+    // the highest clear spot on the hills with an open, falling view towards Downtown
+    let p = null, tx = 0, tz = 0;
+    if (reg && dt) for (let x = reg.x - reg.r; x < reg.x + reg.r; x += 20)
+      for (let z = reg.z - reg.r; z < reg.z + reg.r; z += 20) {
+        if (Math.hypot(x - reg.x, z - reg.z) > reg.r) continue;
+        const h = terrainHeight(x, z);
+        if (p && h <= p.h) continue;
+        let fx = dt.x - x, fz = dt.z - z;
+        const fl = Math.hypot(fx, fz);
+        fx /= fl; fz /= fl;
+        let open = true;
+        for (let d = 25; d <= 700 && open; d += 25) if (terrainHeight(x + fx * d, z + fz * d) > h - 2 - d * 0.04) open = false;
+        if (!open || flatAt(x, z, 20) > 18 || roadWithin(x, z, 25) || !clearOf(x, z, 55)) continue;
+        p = { x, z, h };
+        tx = fx; tz = fz;
+      }
+    if (p) {
+      const rot = Math.atan2(tx, tz); // letters face Downtown (+z local)
+      const text = 'PINEWOOD', cell = 3.0, depth = 0.9;
+      const ax = Math.cos(rot), az = -Math.sin(rot); // along the sign
+      const span = text.length * 6 * cell;
+      const letters = [];
+      for (let i = 0; i < text.length; i++) {
+        const gl = FONT5x7[text[i]];
+        const lu = -span / 2 + i * 6 * cell + 2.5 * cell;
+        const lx = p.x + ax * lu, lz = p.z + az * lu;
+        const base = Math.min(terrainHeight(lx - ax * 3, lz - az * 3), terrainHeight(lx + ax * 3, lz + az * 3), terrainHeight(lx, lz)) - 0.8;
+        for (let row = 0; row < 7; row++) {
+          const bits = gl[row];
+          for (let c0 = 0; c0 < 5; c0++) {
+            if (bits[c0] !== '1' || (c0 > 0 && bits[c0 - 1] === '1')) continue;
+            let c1 = c0;
+            while (c1 + 1 < 5 && bits[c1 + 1] === '1') c1++;
+            const u = lu + ((c0 + c1) / 2 - 2) * cell, y = base + (6 - row) * cell + cell / 2 + 0.8;
+            const x = p.x + ax * u, z = p.z + az * u;
+            const wv = (c1 - c0 + 1) * cell;
+            kitAdd('box', x, y, z, wv, cell, depth, rot, 0xf4f4f0, { far: 1, glow: 0.35 }); // a little self-lit so it reads white in any light, floodlit at night
+            solidBox(x, z, wv / 2, depth / 2, rot, y - cell / 2, y + cell / 2, true);
+          }
+        }
+        letters.push({ x: lx, z: lz, base });
+      }
+      // a few spot lights on the ground in front light it at night
+      LANDMARKS.push({ type: 'hillsign', x: p.x, z: p.z, rot, letters });
+    }
+  }
+
+  // ---- chairlift from the foothill village to the top of Mt. Ember
+  {
+    const reg = district('Mt. Ember');
+    let top = null;
+    if (reg) for (let x = reg.x - reg.r; x < reg.x + reg.r; x += 30)
+      for (let z = reg.z - reg.r; z < reg.z + reg.r; z += 30) {
+        const h = terrainHeight(x, z);
+        if (!top || h > top.h) top = { x, z, h };
+      }
+    let base = null;
+    // the village end: the nearest built-up, low-lying alpine ground at least 700 m from the top
+    if (top) scanStyle('alpine', 30, (x, z) => {
+      const h = terrainHeight(x, z);
+      if (urbanAt(x, z) < 0.3 || h < 3 || h > 80) return;
+      const d = Math.hypot(x - top.x, z - top.z);
+      if (d > 700 && (!base || d < base.d)) base = { x, z, d };
+    }, RD);
+    if (top && base) {
+      // walk back towards the village from the summit until clear ground for the stations
+      const tx = (top.x - base.x) / base.d, tz = (top.z - base.z) / base.d;
+      let b0 = null;
+      for (let k = 0; k < 40 && !b0; k++) {
+        const x = base.x + tx * k * 15, z = base.z + tz * k * 15;
+        if (flatAt(x, z, 7) < 4 && !roadWithin(x, z, 4) && clearOf(x, z, 8)) b0 = { x, z };
+      }
+      let t0 = null;
+      for (let k = 2; k < 30 && !t0; k++) {
+        const x = top.x - tx * k * 10, z = top.z - tz * k * 10;
+        if (flatAt(x, z, 6) < 8 && clearOf(x, z, 7)) t0 = { x, z };
+      }
+      if (b0 && t0) {
+        const rot = Math.atan2(tx, tz);
+        for (const s of [b0, t0]) {
+          const st = addBox(s.x, s.z, 5, 6.5, rot, 6, 0x5a3d28, 'station');
+          facade(st, FAC.CHALET, GF.GARAGE);
+          st.roof = 0x3a3f45; st.roofType = 'gable'; st.pitch = 0.7;
+        }
+        const L = Math.hypot(t0.x - b0.x, t0.z - b0.z);
+        const n = Math.max(2, Math.round(L / 110));
+        const pylons = [];
+        for (let k = 0; k <= n; k++) {
+          const x = b0.x + (t0.x - b0.x) * k / n, z = b0.z + (t0.z - b0.z) * k / n;
+          const g = terrainHeight(x, z);
+          const end = k === 0 || k === n;
+          const hgt = end ? 10 : 17;
+          const yb = end ? (k === 0 ? g + 0 : g) : g - 0.5;
+          if (!end && !clearOf(x, z, 1.2)) continue;
+          pylons.push({ x, z, y: yb, h: hgt, end });
+          if (!end) post(x, z, 0.8, yb - 1, yb + hgt);
+        }
+        LANDMARKS.push({ type: 'chairlift', rot, pylons });
+      }
+    }
+  }
+
+  // ---- Crimson Tower: the downtown tower nearest the core becomes the island's tallest
+  {
+    const core = W.downtowns && W.downtowns[0];
+    let best = null;
+    if (core) for (const b of buildings) {
+      if (b.kind !== 'tower' || b.hx < 8 || b.hz < 8) continue;
+      const d = Math.hypot(b.cx - core[0], b.cz - core[1]);
+      if (d < 500 && (!best || d < best.d)) best = { b, d };
+    }
+    if (best) {
+      const b = best.b;
+      if (b.kids) for (const k of b.kids) removeBuilding(k);
+      b.kids = [];
+      b.fac = FAC.GLASS;
+      b.color = 0x3c5a6e;
+      b.y1 = b.y0 + 5 + 40 * 3.9 + 0.6 + (b.y1 - b.y0 > 170 ? 0 : 0);
+      // two set-back crowns, then a spire with a red beacon
+      let top = b.y1;
+      for (const [k, hh] of [[0.72, 7 * 3.9 + 0.6], [0.48, 4 * 3.9 + 0.6]]) {
+        const t = addBox(b.cx, b.cz, b.hx * k, b.hz * k, b.rot, hh, 0x3c5a6e, 'tower', null, top);
+        facade(t, FAC.GLASS, GF.HOME);
+        t.gy = top;
+        b.kids.push(t);
+        top += hh;
+      }
+      kitAdd('cyl', b.cx, top + 22, b.cz, 1.6, 44, 1.6, 0, 0xb8c0c8, { far: 1 });
+      kitAdd('sphere', b.cx, top + 44.5, b.cz, 1.6, 1.6, 1.6, 0, 0xff2020, { far: 1, glow: 1, beacon: 1 });
+      signs.push({ text: 'CRIMSON', x: b.cx + Math.sin(b.rot) * (b.hz * 0.48 + 0.12), y: top - 6, z: b.cz + Math.cos(b.rot) * (b.hz * 0.48 + 0.12), rot: b.rot, w: b.hx * 0.9, h: b.hx * 0.22, bg: null, fg: '#ff5a4a', glow: 1 });
+    }
+  }
+
+  // ---- Southport mission bell tower
+  {
+    const c = W.downtowns && W.downtowns[2];
+    const p = c && nearFree(c[0], c[1], 6, 400);
+    if (p) {
+      const bt = addBox(p.x, p.z, 3.4, 3.4, RD() * Math.PI, 24, 0xf5efe3, 'belltower');
+      facade(bt, FAC.MISSION, GF.HOME);
+      bt.roof = 0xb5562f; bt.roofType = 'hip'; bt.pitch = 1.1;
+      // belfry: dark arched openings on the top storey are drawn as a band of boxes
+      for (const [u, v] of [[0, 3.42], [0, -3.42], [3.42, 0], [-3.42, 0]]) {
+        const [x, z] = bLocal(bt, u, v);
+        kitAdd('box', x, bt.y1 - 3.2, z, u ? 0.05 : 2.2, 3.2, u ? 2.2 : 0.05, bt.rot, 0x2a2420);
+      }
+    }
+  }
+
+  // ---- Westwood googie pylon sign
+  {
+    const d = district('Westwood');
+    let spot = null;
+    if (d) for (const s of segs) {
+      if (s.kind !== 'main' || s.bridge || styleKeyAt(s.a.x, s.a.z) !== 'strip') continue;
+      const off = s.w / 2 + (s.sidewalk ? SIDEWALK : 0) + 2.2;
+      const x = s.a.x - s.dz * off, z = s.a.z + s.dx * off;
+      const dd = Math.hypot(x - d.x, z - d.z);
+      if (spot && dd > spot.dd) continue;
+      if (roadWithin(x, z, 1) || !clearOf(x, z, 3)) continue;
+      spot = { x, z, dd, rot: Math.atan2(s.dx, s.dz) };
+    }
+    if (spot) {
+      const y = terrainHeight(spot.x, spot.z) - 0.3;
+      kitAdd('box', spot.x, y + 11, spot.z, 0.9, 22, 0.9, spot.rot, 0xd8d0c0, { far: 1 });
+      kitAdd('box', spot.x, y + 15, spot.z, 0.35, 5.5, 11, spot.rot, 0x2aa37a, { far: 1 });
+      for (let k = 0; k < 6; k++) kitAdd('box', spot.x, y + 23, spot.z, 0.2, 6.5, 0.45, spot.rot, 0xffd23a, { far: 1, glow: 1, rx: (k / 6) * Math.PI });
+      kitAdd('sphere', spot.x, y + 23, spot.z, 1.6, 1.6, 1.6, 0, 0xff6a2a, { far: 1, glow: 1 });
+      for (const sg of [-1, 1]) signs.push({ text: 'WESTWOOD', x: spot.x + Math.cos(spot.rot) * 0.2 * sg, y: y + 15, z: spot.z - Math.sin(spot.rot) * 0.2 * sg, rot: spot.rot + Math.PI / 2 * sg, w: 10.4, h: 2.6, bg: '#2aa37a', fg: '#fff6d8', glow: 1 });
+      post(spot.x, spot.z, 0.6, y - 1, y + 22);
+    }
+  }
+
+  // ---- big neon sign on an Eastgate rooftop
+  {
+    const c = W.downtowns && W.downtowns[1];
+    let best = null;
+    if (c) for (const b of buildings) {
+      if (b.kind !== 'block' || b.roof || b.hx < 6 || b.y1 - b.y0 < 14 || styleKeyAt(b.cx, b.cz) !== 'eastgate') continue;
+      const d = Math.hypot(b.cx - c[0], b.cz - c[1]);
+      if (!best || d < best.d) best = { b, d };
+    }
+    if (best) {
+      const b = best.b;
+      const [x, z] = bLocal(b, 0, b.hz - 1.2);
+      const w = Math.min(26, b.hx * 1.8);
+      for (const u of [-w / 2 + 1, w / 2 - 1]) {
+        const [px, pz] = bLocal(b, u, b.hz - 1.4);
+        kitAdd('box', px, b.y1 + 2.5, pz, 0.3, 5, 0.3, b.rot, 0x333333);
+      }
+      signs.push({ text: 'EASTGATE', x, y: b.y1 + 5.2, z, rot: b.rot, w, h: w * 0.2, bg: '#14001e', fg: '#ff3fa4', glow: 1 });
+      b.roofBill = 0;
+    }
+  }
+
+  // ---- rooftop billboards (Eastgate)
+  for (const b of buildings) {
+    if (!b.roofBill || b.roof) continue;
+    const [x, z] = bLocal(b, 0, b.hz * 0.3);
+    const w = Math.min(12, b.hx * 1.6);
+    for (const u of [-w / 2 + 0.6, w / 2 - 0.6]) {
+      const [px, pz] = bLocal(b, u, b.hz * 0.3 - 0.3);
+      kitAdd('box', px, b.y1 + 1.5, pz, 0.25, 3, 0.25, b.rot, 0x3a3a3a);
+    }
+    kitAdd('bill', x, b.y1 + 3 + w * 0.21, z, w, w * 0.42, 1, b.rot, 0xffffff, { ad: b.roofBill - 1 });
+  }
+}
+
+// 5x7 pixel font for the hillside letters
+const FONT5x7 = {
+  P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
+  N: ['10001', '11001', '10101', '10101', '10011', '10001', '10001'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  W: ['10001', '10001', '10001', '10101', '10101', '11011', '10001'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+};
 
 // ---------------------------------------------------------------- places
 export function gangAt(x, z) {
@@ -1276,6 +2013,7 @@ export function generateWorldData() {
   limitRoadGrades();
   carveRoadShoulders();
   regSegs();
+  buildStyleGrid();
   genAirports();
   shapeShores();
   genBuildings();
@@ -1287,6 +2025,7 @@ export function generateWorldData() {
   for (const b of buildings) if (b.fac === undefined) facade(b, ...(b.kind === 'mid' && b.hx > 20 ? [FAC.GLASS, GF.LOBBY] : KIND_FAC[b.kind] || [FAC.PLASTER, GF.HOME]));
   genFences();
   genBeach();
+  genDressing(); // district props and landmarks: own RNG, after everything that uses the shared one
   // a few stunt ramps around the island
   for (const [px, py, rot] of [[250, 520, 0.6], [270, 540, 2.0], [230, 505, -0.5], [360, 520, 1.2], [600, 300, 0.2]]) {
     const p = streetSpot(px * TS - HALF, py * TS - HALF, false);

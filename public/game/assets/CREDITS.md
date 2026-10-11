@@ -71,3 +71,9 @@ The police siren is still synthesized in code.
 | the_comeback | "The Comeback" | Godot demo projects (audio/rhythm_game) | CC0 1.0 |
 
 Radio station names in the game are made up; the tracks are the ones listed above.
+
+## District dressing (feat/map-variety)
+
+No new asset files. District buildings, paving, billboards (invented brands), containers, cranes,
+lighthouse, pier and ferris wheel, water towers, chairlift and hillside letters are procedural
+geometry and canvas textures generated at load time (`js/districts.js`, `js/dressing.js`).

@@ -123,6 +123,8 @@ State of the GTA-style browser game as of 10 Oct 2026, and what to do next.
 | `js/terrain.js` | Loads `world.json`. Road graph (`nodes`, `segs`, `roads`), ground queries (`groundHeight`, `roadAt`, `onPavement`), colliders, buildings, trees, lamps, airports, places, `streetSpot`, `zoneName` |
 | `js/world.js` | Meshes for terrain, roads, pavements, bridges, buildings, nature, lamps and airports; water; day clock |
 | `js/gfx.js` | Graphics presets, sky, sun/moon, fog, environment map, lamp light, material tuning, post-processing, pause-menu Graphics control |
+| `js/districts.js` | District identity table (palettes, facades, heights, roofs, lamps, paving, fences, trees, ground); see tools-tests/art/ART_BIBLE.md |
+| `js/dressing.js` | Draws terrain.js `kit` props and `LANDMARKS` (cranes, pier and ferris wheel, lighthouse, water towers, chairlift), night light pools |
 | `js/assets.js` | Model loading (CSP-safe), vehicle templates, `HUMANS` roster, building `buildCharacterModel` |
 | `js/anim.js` | Skeletal animation rig for realistic people |
 | `js/car_physics.js` | Raycast vehicle model (from the physics research) |

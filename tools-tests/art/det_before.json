@@ -1,0 +1,16 @@
+{
+ "buildings": 42205,
+ "trees": 23642,
+ "treesHash": -785567396,
+ "props": 6197,
+ "propsHash": -650166277,
+ "lamps": 12232,
+ "lampsHash": -667883010,
+ "special": "667:-2449,-2971,-1908",
+ "ramps": "-2481,1572,14.7 -2147,1958,11.7 -2788,1565,14.9 -814,1657,15.8 2821,-1721,14.1",
+ "fences": 103912,
+ "missions": "abortMission,dropCash,initMissions,updateMissions",
+ "G": {
+  "pickups": ""
+ }
+}
