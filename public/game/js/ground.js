@@ -11,10 +11,10 @@ import {
 import { noise2, mulberry32 } from './noise.js';
 import { inlineData } from './assets.js'; // CSP-safe embedded buffers/images (artifact host)
 
-// low | med (default) | high
+// low | med | high, from the graphics preset (gfx.js): low, medium, high/ultra
 export function quality() {
   if (G.lowQ) return 'low';
-  return typeof location !== 'undefined' && /[?&]q=high/.test(location.search) ? 'high' : 'med';
+  return G.gfxPreset === 'high' || G.gfxPreset === 'ultra' ? 'high' : 'med';
 }
 
 const TEX = 'assets/textures/ground/';

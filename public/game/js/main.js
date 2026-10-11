@@ -18,6 +18,7 @@ import { loadModels } from './assets.js';
 import { loadGroundAssets } from './ground.js';
 import { loadSounds } from './audio.js';
 import { initNet, updateNet } from './net.js';
+import { presetFromEnv, applyPreset, getComposer, resizeGfx, initGfxMenu, initAutoQuality, autoQuality, P as gfxP } from './gfx.js';
 
 const $ = (id) => document.getElementById(id);
 let renderer, scene, camera;
@@ -36,10 +37,12 @@ async function boot() {
     setLoading('WebGL is not available in this browser.');
     return;
   }
-  G.lowQ = /[?&]q=low/.test(location.search);
-  renderer.setPixelRatio(G.lowQ ? 0.75 : Math.min(devicePixelRatio, 1.5));
+  const preset = presetFromEnv(); // ?q=low|medium|high|ultra, else the saved choice, else high
+  G.gfxPreset = preset.name;
+  G.lowQ = preset.name === 'low';
+  renderer.setPixelRatio(gfxP().pr);
   renderer.setSize(innerWidth, innerHeight);
-  renderer.shadowMap.enabled = !G.lowQ;
+  renderer.shadowMap.enabled = gfxP().shadow > 0;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
@@ -62,6 +65,10 @@ async function boot() {
   await world;
   await nextFrame();
   buildWorld(scene);
+  G.groundBuilt = gfxP().ground;
+  applyPreset(G.gfxPreset); // shadows, post-processing chain, environment map
+  initGfxMenu();
+  initAutoQuality(preset.explicit);
   setLoading('Painting the map…', 60);
   await nextFrame();
   initFx(scene);
@@ -157,6 +164,7 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   setFxScale((innerHeight * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360)));
+  resizeGfx(innerWidth, innerHeight);
 }
 
 // ---------------------------------------------------------------- states
@@ -292,7 +300,9 @@ function frame(now) {
     updateWorld(dt * 0.2, G.player.pos);
   }
   updateNet(dt); // keeps sending while paused or on the results screen
-  renderer.render(scene, camera);
+  autoQuality(dt, notify);
+  const composer = getComposer();
+  if (composer) composer.render(); else renderer.render(scene, camera);
   G.pressed = {};
   G.mouse.leftPressed = false;
 }

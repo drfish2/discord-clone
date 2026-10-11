@@ -10,6 +10,7 @@ import { mergeGeos } from './models.js';
 import { hasModel, instanceProp, updateTileVisibility, TILED } from './assets.js';
 import { terrainMaterial, terrainTextured, splatWeights, patchWaterShore, initGroundDetail, updateGroundDetail } from './ground.js';
 import { buildFlora, buildFences, buildBeachProps, updateFloraVisibility } from './flora.js';
+import { buildAtmosphere, updateAtmosphere, roadMats } from './gfx.js';
 
 const M4 = new THREE.Matrix4();
 const Q = new THREE.Quaternion();
@@ -19,7 +20,7 @@ const C = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
 const TILE = 500;
 
-let sun, hemi, skyMat, lampMat, clouds, waterMat, fog;
+let lampMat, waterMat;
 
 // ---------------------------------------------------------------- textures
 function canvasTex(w, h, draw, repeat = true) {
@@ -229,11 +230,18 @@ function stripRange(B, P, o0, o1, lift, d0, d1, uScale = null) {
   }
 }
 
+// asphalt is a standard material so it can take a wet-looking sheen at night (gfx.js drives roughness)
+function roadMat(o) {
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.93, metalness: 0, ...o });
+  m.userData.gfx = 'road';
+  roadMats.push(m);
+  return m;
+}
 function buildRoads(scene) {
   const mats = {
-    main: new THREE.MeshLambertMaterial({ map: roadTexture('main'), side: THREE.DoubleSide }),
-    city: new THREE.MeshLambertMaterial({ map: roadTexture('city'), side: THREE.DoubleSide }),
-    rural: new THREE.MeshLambertMaterial({ map: roadTexture('rural'), side: THREE.DoubleSide }),
+    main: roadMat({ map: roadTexture('main'), side: THREE.DoubleSide }),
+    city: roadMat({ map: roadTexture('city'), side: THREE.DoubleSide }),
+    rural: roadMat({ map: roadTexture('rural'), side: THREE.DoubleSide }),
   };
   const walkMat = new THREE.MeshLambertMaterial({ map: canvasTex(128, 128, (g, w, h) => {
     g.fillStyle = '#a7a59e'; g.fillRect(0, 0, w, h);
@@ -243,7 +251,7 @@ function buildRoads(scene) {
     for (let i = 0; i < 900; i++) { const v = 150 + Math.random() * 40; g.fillStyle = `rgba(${v},${v},${v},0.4)`; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
   }), side: THREE.DoubleSide });
   const curbMat = new THREE.MeshLambertMaterial({ color: 0x9a978f, side: THREE.DoubleSide });
-  const jMat = new THREE.MeshLambertMaterial({ map: canvasTex(128, 128, (g, w, h) => asphalt(g, w, h)), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
+  const jMat = roadMat({ map: canvasTex(128, 128, (g, w, h) => asphalt(g, w, h)), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
   const crossMat = new THREE.MeshLambertMaterial({ map: canvasTex(256, 64, (g, w, h) => {
     asphalt(g, w, h);
     g.fillStyle = '#efefef';
@@ -953,65 +961,11 @@ function flushBoxes(scene) {
   });
 }
 
-// ---------------------------------------------------------------- sky
-function buildSky(scene) {
-  skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: {
-      top: { value: new THREE.Color(0x3d7fd6) },
-      horizon: { value: new THREE.Color(0xbfdcf2) },
-      sunDir: { value: new THREE.Vector3(0, 1, 0) },
-      sunCol: { value: new THREE.Color(0xfff2c8) },
-      night: G.uniforms.uNight,
-    },
-    vertexShader: `varying vec3 vD; void main(){ vD = normalize(position); vec4 p = modelViewMatrix * vec4(position,1.0); gl_Position = projectionMatrix * p; gl_Position.z = gl_Position.w; }`,
-    fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; uniform vec3 sunCol; uniform float night; varying vec3 vD;
-      float h(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,45.164))) * 43758.5453); }
-      void main(){
-        float y = clamp(vD.y, -0.2, 1.0);
-        vec3 c = mix(horizon, top, pow(max(y, 0.0), 0.6));
-        float s = max(dot(normalize(vD), sunDir), 0.0);
-        c += sunCol * (pow(s, 900.0) * 3.0 + pow(s, 12.0) * 0.25);
-        vec3 q = floor(normalize(vD) * 300.0);
-        float star = step(0.9975, h(q)) * night * step(0.05, y);
-        c += vec3(star);
-        gl_FragColor = vec4(c, 1.0);
-      }`,
-  });
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(6500, 32, 16), skyMat);
-  sky.renderOrder = -1;
-  sky.frustumCulled = false;
-  G.skyMesh = sky;
-  scene.add(sky);
-
-  const cloudTex = canvasTex(256, 128, (g, w, h) => {
-    for (let i = 0; i < 26; i++) {
-      const x = w * 0.15 + Math.random() * w * 0.7, y = h * 0.45 + (Math.random() - 0.5) * h * 0.3;
-      const r = 18 + Math.random() * 30;
-      const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      gr.addColorStop(0, 'rgba(255,255,255,0.9)');
-      gr.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = gr;
-      g.fillRect(0, 0, w, h);
-    }
-  }, false);
-  const cm = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, depthWrite: false, fog: false, opacity: 0.9 });
-  clouds = new THREE.Group();
-  for (let i = 0; i < 110; i++) {
-    const s = new THREE.Sprite(cm);
-    s.position.set((Math.random() - 0.5) * 12000, 1150 + Math.random() * 450, (Math.random() - 0.5) * 12000);
-    const sc = 350 + Math.random() * 600;
-    s.scale.set(sc, sc * 0.45, 1);
-    clouds.add(s);
-  }
-  scene.add(clouds);
-  G.cloudMat = cm;
-}
-
+// ---------------------------------------------------------------- sea
 function buildWater(scene) {
-  waterMat = new THREE.MeshStandardMaterial({ color: 0x2a6f8f, roughness: 0.12, metalness: 0.2, transparent: true, opacity: 0.86 });
+  // low roughness, no metalness: the sky environment map gives it fresnel reflections
+  waterMat = new THREE.MeshStandardMaterial({ color: 0x1f5f78, roughness: 0.06, metalness: 0.0, transparent: true, opacity: 0.88 });
+  waterMat.userData.gfx = 'water';
   waterMat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = G.uniforms.uTime;
     sh.vertexShader = sh.vertexShader
@@ -1041,58 +995,11 @@ function buildWater(scene) {
   scene.add(w);
 }
 
-function buildLights(scene) {
-  hemi = new THREE.HemisphereLight(0xcfe6ff, 0x5a5040, 0.9);
-  scene.add(hemi);
-  sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera;
-  sc.left = -110; sc.right = 110; sc.top = 110; sc.bottom = -110; sc.near = 10; sc.far = 900;
-  sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.6;
-  scene.add(sun, sun.target);
-  fog = new THREE.Fog(0xbfdcf2, 700, 4200);
-  scene.fog = fog;
-  G.sun = sun;
-  G.hemi = hemi;
-}
-
-const DAY = { top: new THREE.Color(0x3d7fd6), hor: new THREE.Color(0xc4def0) };
-const DUSK = { top: new THREE.Color(0x2c3e70), hor: new THREE.Color(0xf09a5a) };
-const NIGHT = { top: new THREE.Color(0x050a18), hor: new THREE.Color(0x1a2338) };
-const tc = new THREE.Color(), hc = new THREE.Color();
-
 export function updateWorld(dt, focus) {
   G.dayTime = (G.dayTime + dt * (24 / 720)) % 24; // full day = 12 minutes
-  const t = G.dayTime;
-  const ang = ((t - 6) / 24) * Math.PI * 2; // 6am sunrise, 18 sunset
-  const sy = Math.sin(ang), sx = Math.cos(ang);
-  const sunDir = V.set(sx * 0.8, sy, 0.45).normalize();
-  G.sunDir = (G.sunDir || new THREE.Vector3()).copy(sunDir);
-  const day = sstep(-0.12, 0.25, sy);
-  const dusk = clamp(1 - Math.abs(sy) * 4, 0, 1) * (sy > -0.25 ? 1 : 0);
-  G.night = 1 - day;
-  G.uniforms.uNight.value = G.night;
-  tc.copy(NIGHT.top).lerp(DAY.top, day);
-  hc.copy(NIGHT.hor).lerp(DAY.hor, day);
-  tc.lerp(DUSK.top, dusk * 0.5);
-  hc.lerp(DUSK.hor, dusk * 0.7);
-  skyMat.uniforms.top.value.copy(tc);
-  skyMat.uniforms.horizon.value.copy(hc);
-  skyMat.uniforms.sunDir.value.copy(sunDir);
-  fog.color.copy(hc);
-  G.renderer.setClearColor(hc);
-  G.skyMesh.position.copy(G.camera.position);
-  const lightDir = sy > -0.05 ? sunDir : V.set(-sx * 0.6, -sy, 0.4).normalize();
-  sun.intensity = sy > -0.05 ? 2.4 * sstep(-0.05, 0.2, sy) + 0.05 : 0.35;
-  sun.color.setHex(sy > -0.05 ? 0xfff1d6 : 0x9fb4ff).lerp(new THREE.Color(0xffa060), dusk * 0.6);
-  hemi.intensity = 0.25 + day * 0.75;
-  sun.position.set(focus.x + lightDir.x * 400, focus.y + lightDir.y * 400, focus.z + lightDir.z * 400);
-  sun.target.position.copy(focus);
-  lampMat.color.setHex(G.night > 0.5 ? 0xffe2a0 : 0x888877);
-  G.cloudMat.opacity = 0.25 + day * 0.65;
-  clouds.position.x = (G.time * 3) % 1000;
+  updateAtmosphere(dt, focus); // sky, sun/moon, fog, environment map, lamp light, post (gfx.js)
+  // lamp heads: HDR warm white at night so they bloom
+  if (G.lampOn > 0.5) lampMat.color.setRGB(2.6, 1.9, 1.1); else lampMat.color.setHex(0x888877);
   G.uniforms.uTime.value = G.time;
   updateGroundDetail(dt, G.camera.position); // grass and small plants around the camera
   tileT -= dt;
@@ -1107,8 +1014,7 @@ let tileT = 0;
 
 export function buildWorld(scene) {
   generateWorldData();
-  buildLights(scene);
-  buildSky(scene);
+  buildAtmosphere(scene);
   buildTerrain(scene);
   buildWater(scene);
   buildRoads(scene);
