@@ -55,7 +55,9 @@ export const REAL_CARS = {
   'gz-firetruck': { name: 'Fire Engine' },
   'gz-bus': { name: 'City Bus' },
 };
-const LOW_Q = typeof location !== 'undefined' && /[?&]q=low/.test(location.search);
+// low graphics preset: ?q=low, or the saved pause-menu choice when the URL names none (see gfx.js)
+const LOW_Q = typeof location !== 'undefined' && (/[?&]q=low/.test(location.search)
+  || (!/[?&]q=/.test(location.search) && (() => { try { return localStorage.getItem('cc-gfx-preset') === 'low'; } catch (e) { return false; } })()));
 function REAL_CAR_FILES() {
   return Object.keys(REAL_CARS).filter((f) => !(LOW_Q && REAL_CARS[f].heavy));
 }

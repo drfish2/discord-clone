@@ -8,7 +8,7 @@ State of the GTA-style browser game as of 10 Oct 2026, and what to do next.
 ## Running it
 
 - **Standalone:** serve `public/game/` with any static server (`npx serve public/game`) and open `index.html`. ES modules don't load from `file://`.
-- **Low quality:** add `?q=low`. This currently only turns off shadows and lowers the resolution.
+- **Graphics presets:** `?q=low|medium|high|ultra` (default high), or the Graphics buttons in the pause menu (saved in localStorage as `cc-gfx-preset`). See `js/gfx.js`. Low has no post FX, shadows or environment map. On a default (never chosen) preset the game steps down by itself if play runs below 30 fps; it never does under automation (`navigator.webdriver`).
 - **Multiplayer:** open two tabs in the same browser (BroadcastChannel). On claude.ai, players join through the artifact's live room.
 
 ## What works now
@@ -77,7 +77,11 @@ State of the GTA-style browser game as of 10 Oct 2026, and what to do next.
    - Realistic models keep their real size; `realTemplate` puts the origin under the physics CoG and passes the measured wheelbase/track/wheel radius to `car_physics.js` via `spec.geom` (per-vehicle spec copy in `Vehicle`).
    - `?q=low` skips the two ~40k-triangle sports cars (rossini-9x, vector-gt). Kenney models remain the fallback when a GLB fails to load.
    - Tests: `tools-tests/cars_test.js`, `cars_shots.js`, `accel_compare.js`, `boot_time.js`.
-3. **The Ultra graphics preset is unfinished.** The paused agent's work is saved as WIP commit `b44bcd2` on local branch `worktree-agent-ad40c8d74005d9917`, in worktree `.claude/worktrees/agent-ad40c8d74005d9917`. It touches `gfx.js` (new), `main.js`, `world.js`, `index.html` and `assets/textures/` (CC0 ambientCG textures), and adds 792 lines. It is **untested**: review it, finish it, and merge it.
+3. **Graphics presets are in (`js/gfx.js`, branch `feat/graphics`).** The old Ultra WIP was lost and rebuilt from scratch.
+   - Pipeline (medium+): RenderPass into a HalfFloat target with MSAA x4, GTAO (ultra; half res, reuses the main depth buffer), half-res UnrealBloom (night-aware), OutputPass (ACES), then a grade pass (teal/orange split tone, S-curve, vignette, grain).
+   - Procedural sky shader (no HDRI download), palette keyed on sun elevation; a PMREM environment map of it is regenerated when the sun moves about 1 degree. Height fog is a global `ShaderChunk.fog_*` override (exponential in height, sun in-scattering on lit materials), so every material gets it with no per-material hooks.
+   - One shadowed directional light (sun by day, moon by night), box follows the camera and is texel-snapped. Lamps: additive light pools on all presets plus 6 (high) / 12 (ultra) real point lights near the camera.
+   - Gotchas: nothing here replaces a material's `onBeforeCompile`. `tuneMaterial` only changes plain properties (car paint roughness/metalness, glass, envMapIntensity). Not done: CSM (single cascade instead), planar water reflections (Water.js would drop the shore shader and double the draw calls).
    - Intended Ultra pipeline: EffectComposer, then GTAOPass, half-res UnrealBloom (night-aware), OutputPass with AgX, then SMAA.
    - Also intended: Sky.js with a PMREM environment map regenerated when the sun moves; CSM shadows with 4 cascades; Water.js on the sea; height fog; terrain detail textures; grass near the camera.
    - Gotcha: CSM `setupMaterial` overwrites `onBeforeCompile`, which the building window shader and water shader rely on, so chain the hooks.
@@ -117,7 +121,8 @@ State of the GTA-style browser game as of 10 Oct 2026, and what to do next.
 | File | Role |
 | --- | --- |
 | `js/terrain.js` | Loads `world.json`. Road graph (`nodes`, `segs`, `roads`), ground queries (`groundHeight`, `roadAt`, `onPavement`), colliders, buildings, trees, lamps, airports, places, `streetSpot`, `zoneName` |
-| `js/world.js` | Meshes for terrain, roads, pavements, bridges, buildings, nature, lamps and airports; sky, lights, water, day/night |
+| `js/world.js` | Meshes for terrain, roads, pavements, bridges, buildings, nature, lamps and airports; water; day clock |
+| `js/gfx.js` | Graphics presets, sky, sun/moon, fog, environment map, lamp light, material tuning, post-processing, pause-menu Graphics control |
 | `js/assets.js` | Model loading (CSP-safe), vehicle templates, `HUMANS` roster, building `buildCharacterModel` |
 | `js/anim.js` | Skeletal animation rig for realistic people |
 | `js/car_physics.js` | Raycast vehicle model (from the physics research) |
