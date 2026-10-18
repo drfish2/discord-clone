@@ -106,7 +106,7 @@
   function canMove(s) {
     var ph = phase(s);
     if (ph !== 'lobby' && ph !== 'play' && ph !== 'over') return !inGame; // menu attract mode handles itself
-    if (task) return false;
+    if (task || (IS.tasks && IS.tasks.isOpen && IS.tasks.isOpen())) return false;
     if (me.vt) return false;
     if (IS.ui && IS.ui.isTyping && IS.ui.isTyping()) return false;
     return true;
@@ -236,14 +236,14 @@
   function openTaskFor(t) {
     if (!IS.tasks || !IS.tasks.open || task) return;
     play('click');
-    var ctrl = IS.tasks.open(t.kind, { title: t.name }, {
+    var mp = myPlayer(st());
+    var ctrl = IS.tasks.open(t.kind, { title: t.name, color: mp ? mp.color : 0 }, {
       onComplete: function () {
         task = null;
         var s = st();
         localDone[t.idx] = true;
         if (s && s.hs) localGame = s.hs.gn;
         IS.client.act('task', t.idx);
-        play('task');
       },
       onClose: function () { task = null; }
     });
@@ -254,7 +254,7 @@
     if (!IS.tasks || !IS.tasks.openFix || task) return;
     play('click');
     var ctrl = IS.tasks.openFix(kind, part, {
-      onComplete: function () { task = null; me.fx = ''; IS.client.act('fix', kind, part); play('task'); },
+      onComplete: function () { task = null; me.fx = ''; IS.client.act('fix', kind, part); },
       onHold: function (h) { me.fx = h ? 'r' + part : ''; pushSelf(); },
       onClose: function () { task = null; me.fx = ''; }
     });
