@@ -426,6 +426,66 @@
       rr(c, w * 0.66 - 3, ty - 2, 6, 5, 1); fs(c, '#2a3150', OL, 1.2);
       ell(c, w * 0.4, ty + 2, 4, 3); fs(c, '#d84a4a', OL, 1.2);
     });
+
+    // Wooden signpost; the text comes from p.tint (sprites are cached per tint).
+    reg('pol_sign', 58, function (c, w, h, ext, p) {
+      var txt = String(p.tint || '').toUpperCase(), top = -ext + 4, bh = 30;
+      shadow(c, w / 2, h * 0.6, w * 0.42, h * 0.3, 0.2);
+      [0.16, 0.84].forEach(function (f) { rr(c, w * f - 4, top + 10, 8, h * 0.6 - top - 10, 2); fs(c, '#6b4a2a', OL, 2); });
+      rr(c, 2, top, w - 4, bh, 5); fs(c, lin(c, 0, top, 0, top + bh, ['#c9925a', '#a8743f']), OL, 2.5);
+      c.fillStyle = 'rgba(70,40,15,0.25)'; c.fillRect(6, top + bh / 2, w - 12, 1.5);
+      // snow on the top edge
+      rr(c, 4, top - 4, w - 8, 7, 3.5); fs(c, '#f6f9fd', OL, 1.5);
+      var font = (IS.assets && IS.assets.FONT_DISPLAY) || '"Russo One", system-ui, sans-serif';
+      c.font = '15px ' + font; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillStyle = 'rgba(40,20,5,0.45)'; c.fillText(txt, w / 2 + 1, top + bh / 2 + 2.5, w - 14);
+      c.fillStyle = '#fff6e6'; c.fillText(txt, w / 2, top + bh / 2 + 1.5, w - 14);
+    });
+
+    // Water cooler (office).
+    reg('pol_cooler', 54, function (c, w, h, ext) {
+      shadow(c, w / 2, h * 0.7, w * 0.45, h * 0.24);
+      box(c, 2, 0, w - 4, h - 2, ext - 22, '#eef2f8', '#aab5cc', 4);
+      var bx = w / 2, by = -ext + 22 + 2;
+      rr(c, bx - w * 0.3, by - 22, w * 0.6, 24, 7); fs(c, 'rgba(120,200,255,0.75)', OL, 2);
+      c.fillStyle = 'rgba(255,255,255,0.6)'; c.fillRect(bx - w * 0.2, by - 18, 3, 16);
+      rr(c, bx - 4, by - 26, 8, 5, 2); fs(c, '#4a8bd8', OL, 1.4);
+      ell(c, bx - 6, h - ext + 14, 2.5, 2.5); fs(c, '#d84a4a', OL, 1); ell(c, bx + 6, h - ext + 14, 2.5, 2.5); fs(c, '#4a8bd8', OL, 1);
+    });
+
+    // Wooden supply crate with a snow-dusted lid (tint 'blue' = metal cargo case).
+    reg('pol_crate', 30, function (c, w, h, ext, p) {
+      var H = Math.min(ext, h * 0.9), metal = p.tint === 'blue';
+      box(c, 1, 0, w - 2, h - 1, H, metal ? '#6f8fc0' : '#c99a5b', metal ? '#41608f' : '#93693a', 4);
+      if (metal) {
+        c.fillStyle = 'rgba(255,255,255,0.25)'; c.fillRect(6, -H + 6, w - 12, 3);
+        c.fillStyle = '#ffd23f'; c.fillRect(w / 2 - 6, h - H + 4, 12, 7);
+        c.strokeStyle = OL; c.lineWidth = 1.2; c.strokeRect(w / 2 - 6, h - H + 4, 12, 7);
+      } else {
+        c.strokeStyle = 'rgba(70,40,15,0.55)'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(6, h - H + 3); c.lineTo(w - 6, h - 4); c.moveTo(w - 6, h - H + 3); c.lineTo(6, h - 4); c.stroke();
+        c.strokeRect(6, h - H + 3, w - 12, H - 7);
+      }
+      // snow on the lid
+      c.beginPath(); c.moveTo(4, -H + 4);
+      for (var x = 4; x <= w - 4; x += 5) c.lineTo(x, -H + 4 + (h - 8) * (0.2 + 0.1 * Math.sin(x * 0.3 + w)));
+      c.lineTo(w - 4, -H + 4); c.closePath();
+      c.fillStyle = 'rgba(248,251,255,0.92)'; c.fill();
+    });
+
+    // Seismograph desk: paper trace, needle and a status lamp.
+    reg('pol_seismo', 40, function (c, w, h, ext) {
+      var H = ext - 12;
+      box(c, 1, 2, w - 2, h - 3, H, '#7d89aa', '#4e587a', 5);
+      var px = 8, py = -H + 7, pw = w - 30, ph = h - 16;
+      rr(c, px, py, pw, ph, 3); fs(c, '#f6f2e6', OL, 1.8);
+      c.beginPath(); c.moveTo(px + 3, py + ph / 2);
+      for (var i = 0; i <= 20; i++) c.lineTo(px + 3 + i * (pw - 6) / 20, py + ph / 2 + Math.sin(i * 2.3) * (i % 5 === 2 ? ph * 0.38 : ph * 0.12));
+      c.strokeStyle = '#d83a3a'; c.lineWidth = 1.5; c.stroke();
+      ell(c, px + pw + 10, py + 6, 5, 5); fs(c, '#ffb04a', OL, 1.5);
+      rr(c, px + pw + 5, py + 15, 10, 6, 2); fs(c, '#30374f', OL, 1.2);
+      line(c, [px + pw - 2, py + ph / 2, px + pw + 6, py - 8], OL, 2);
+    });
   })();
 
   // ==========================================================================================
@@ -434,7 +494,7 @@
   IS.map.define('polar', {
     name: 'Polar Outpost', short: 'Polar',
     blurb: 'A frozen research base: labs, a seismic lab and a dropship linked by snowy outdoor trails.',
-    W: 93, H: 62,
+    W: 93, H: 61,
     theme: {
       bg: 'snow', hallFloor: 'snow', hall: ['#e3ebf4', '#dae4ef'], void: '#c9d6e6',
       // snow-capped rock walls: white tops, blue-grey stone faces
@@ -452,7 +512,7 @@
       { id: 'admin', name: 'Admin', x: 57, y: 19, w: 10, h: 9, floor: 'room', tint: ['#8d88a6', '#847f9c'], label: [0, 3.1] },
       { id: 'field', name: 'Ice Field', x: 70, y: 19, w: 21, h: 15, ch: { tr: 3, br: 4, bl: 2 }, floor: 'snow', label: [-2, -4.6] },
       { id: 'seismic', name: 'Seismic Lab', x: 3, y: 38, w: 13, h: 15, ch: { bl: 3 }, floor: 'tech', tint: ['#5a5f72', '#545969'], label: [0, 5.4] },
-      { id: 'storage', name: 'Storage', x: 20, y: 40, w: 13, h: 13, floor: 'wood', tint: ['#8a6a48', '#7f6142'], label: [0, -1.5] },
+      { id: 'storage', name: 'Storage', x: 20, y: 40, w: 13, h: 13, floor: 'wood', tint: ['#8a6a48', '#7f6142'], label: [0, 4.0] },
       { id: 'medbay', name: 'MedBay', x: 37, y: 35, w: 10, h: 9, floor: 'room', tint: ['#a7c3cf', '#9db9c6'], label: [0.6, 2.9] },
       { id: 'lab', name: 'Laboratory', x: 50, y: 34, w: 17, h: 12, ch: { bl: 2 }, floor: 'room', tint: ['#c4cdd8', '#bac4d0'], label: [0, 0.9] },
       { id: 'drill', name: 'Drill Site', x: 36, y: 49, w: 23, h: 11, ch: { bl: 3, br: 3 }, floor: 'snow', label: [-5.5, 3.2] },
@@ -461,7 +521,7 @@
     corridors: [
       [13, 5, 3, 3],    // comms <-> dropship
       [6, 11, 3, 7],    // comms <-> electrical
-      [22, 15, 4, 3],   // dropship <-> frost yard
+      [17, 15, 14, 3],  // dropship <-> frost yard (wide open snowfield)
       [34, 6, 4, 3],    // dropship <-> weapons
       [49, 6, 4, 3],    // weapons <-> o2
       [67, 7, 5, 3],    // o2 <-> observatory
@@ -472,14 +532,18 @@
       [67, 22, 3, 3],   // admin <-> ice field
       [79, 14, 3, 5],   // observatory <-> ice field
       [6, 27, 3, 11],   // electrical <-> seismic
-      [25, 35, 3, 5],   // frost yard <-> storage
+      [17, 35, 11, 3],  // frost yard -> south-west trail
+      [24, 38, 3, 2],   // trail -> storage door
+      [16, 38, 2, 3],   // trail -> seismic door
       [16, 45, 4, 3],   // storage <-> seismic
       [40, 32, 3, 3],   // office <-> medbay
       [41, 44, 3, 5],   // medbay <-> drill site
       [33, 50, 3, 3],   // storage <-> drill site
       [60, 28, 3, 6],   // admin <-> laboratory
       [55, 46, 3, 3],   // laboratory <-> drill site
-      [67, 41, 7, 3],   // laboratory <-> specimens
+      [59, 55, 22, 4],  // drill site -> east trail
+      [65, 54, 8, 6],   // frozen pond on the east trail
+      [76, 53, 3, 2],   // east trail -> specimens door
       [80, 34, 3, 6]    // ice field <-> specimens
     ],
 
@@ -507,7 +571,7 @@
       prop('prop_chair', 52.2, 30.0, 0.8, 0.8, { room: 'office' });
       S('prop_plant', 36.2, 19.3, 0.7, 0.7, 'office');
       S('prop_plant', 53.1, 22.2, 0.7, 0.7, 'office');
-      S('cabinet', 36.2, 25.4, 1.0, 1.6, 'office');
+      S('pol_cooler', 36.25, 21.0, 0.8, 0.7, 'office');
 
       // ---- Admin ----
       S('admintable', 59.6, 22.6, 3.8, 2.2, 'admin');
@@ -523,8 +587,8 @@
       wallProp('prop_screen', 'comms', 11, 1.0);
       prop('prop_chair', 9.0, 4.7, 0.8, 0.8, { room: 'comms' });
       S('secdesk', 3.2, 7.4, 2.6, 1.0, 'comms');
-      S('prop_crate', 3.2, 9.2, 1.1, 0.9, 'comms');
-      S('pol_antenna', 11.3, 6.6, 1.3, 1.0, 'comms');
+      S('pol_crate', 3.2, 9.2, 1.1, 0.9, 'comms');
+      S('pol_desk', 9.8, 7.0, 2.2, 1.0, 'comms');
 
       // ---- Dropship (outdoor landing site) ----
       var ship = S('pol_dropship', 20.5, 5.0, 8.4, 3.6, 'dropship');
@@ -532,11 +596,11 @@
       addStation('align', 'dropship', S('prop_console', 30.0, 9.0, 1.7, 1.0, 'dropship', { tint: 'amber' }), 30.85, 10.5);
       S('prop_barrel', 17.0, 9.6, 0.8, 0.8, 'dropship', { tint: 'fuel' });
       S('prop_barrel', 17.9, 10.0, 0.8, 0.8, 'dropship', { tint: 'fuel' });
-      S('prop_crate', 30.4, 4.1, 1.2, 1.0, 'dropship');
-      S('prop_crate', 31.7, 4.5, 1.0, 0.9, 'dropship');
+      S('pol_crate', 30.4, 4.1, 1.2, 1.0, 'dropship');
+      S('pol_crate', 31.7, 4.5, 1.0, 0.9, 'dropship');
       lamp(19.6, 13.2, 'dropship'); lamp(28.6, 13.2, 'dropship');
       rock(32.4, 12.5, 0.6, 'dropship', 'b');
-      pile(17.6, 4.4, 0.6, 'dropship');
+      S('pol_antenna', 17.6, 3.0, 1.3, 1.0, 'dropship');
       void ship;
 
       // ---- Weapons ----
@@ -545,7 +609,7 @@
       wallProp('window', 'weapons', 43, 1.0);
       wallProp('window', 'weapons', 44, 1.0);
       addStation('download', 'weapons', wallProp('wallscreen', 'weapons', 46));
-      S('prop_crate', 39.0, 9.8, 1.1, 0.9, 'weapons');
+      S('pol_crate', 39.0, 9.8, 1.1, 0.9, 'weapons');
       S('prop_barrel', 47.0, 9.9, 0.8, 0.8, 'weapons');
 
       // ---- O2 Greenhouse ----
@@ -572,7 +636,7 @@
       addStation('divert', 'electrical', wallProp('divert', 'electrical', 12, 0.9));
       S('generator', 3.2, 21.6, 1.6, 1.5, 'electrical');
       S('generator', 10.2, 24.0, 1.6, 1.5, 'electrical');
-      S('prop_crate', 11.6, 19.6, 0.9, 0.8, 'electrical');
+      S('pol_crate', 11.6, 19.6, 0.9, 0.8, 'electrical');
 
       // ---- Frost Yard (outdoor) ----
       addStation('wires', 'yard', S('pol_weather', 20.6, 21.4, 0.9, 0.7, 'yard'), 21.05, 22.6);
@@ -606,15 +670,18 @@
       wallProp('prop_screen', 'seismic', 10, 1.0);
       S('prop_barrel', 15.0, 39.4, 0.8, 0.8, 'seismic');
       S('prop_barrel', 3.2, 44.0, 0.8, 0.8, 'seismic');
-      S('prop_crate', 3.2, 46.2, 1.1, 0.9, 'seismic');
+      S('pol_crate', 3.2, 46.2, 1.1, 0.9, 'seismic', { tint: 'blue' });
+      S('pol_seismo', 3.2, 48.2, 2.2, 1.0, 'seismic');
+      S('pol_seismo', 13.2, 42.4, 2.2, 1.0, 'seismic');
+      S('pol_crate', 13.6, 47.0, 1.2, 1.0, 'seismic', { tint: 'blue' });
 
       // ---- Storage ----
-      S('prop_crate', 21.0, 42.0, 1.6, 1.3, 'storage');
-      S('prop_crate', 22.7, 42.4, 1.1, 0.9, 'storage');
-      S('prop_crate', 25.0, 45.4, 2.4, 1.6, 'storage');
-      S('prop_crate', 29.6, 42.0, 1.3, 1.2, 'storage');
-      S('prop_crate', 28.6, 48.6, 1.6, 1.3, 'storage');
-      S('prop_crate', 30.4, 49.0, 1.3, 1.1, 'storage');
+      S('pol_crate', 21.0, 42.0, 1.6, 1.3, 'storage', { tint: 'blue' });
+      S('pol_crate', 22.7, 42.4, 1.1, 0.9, 'storage');
+      S('pol_crate', 25.0, 45.4, 2.4, 1.6, 'storage');
+      S('pol_crate', 29.6, 42.0, 1.3, 1.2, 'storage');
+      S('pol_crate', 28.6, 48.6, 1.6, 1.3, 'storage', { tint: 'blue' });
+      S('pol_crate', 30.4, 49.0, 1.3, 1.1, 'storage');
       S('prop_barrel', 20.4, 48.6, 0.8, 0.85, 'storage');
       addStation('fuel', 'storage', S('prop_barrel', 21.3, 48.6, 0.8, 0.85, 'storage', { tint: 'fuel' }), 21.7, 50.0);
       addStation('garbage', 'storage', wallProp('chute', 'storage', 30, 1.0));
@@ -646,12 +713,25 @@
       addStation('calibrate', 'drill', S('prop_console', 42.6, 53.4, 1.6, 1.0, 'drill', { tint: 'amber' }), 43.4, 54.9);
       S('prop_barrel', 50.0, 52.0, 0.8, 0.8, 'drill', { tint: 'fuel' });
       S('prop_barrel', 50.8, 52.4, 0.8, 0.8, 'drill', { tint: 'fuel' });
-      S('prop_crate', 37.2, 57.0, 1.2, 1.0, 'drill');
+      S('pol_crate', 37.2, 57.0, 1.2, 1.0, 'drill');
       rock(55.0, 50.6, 0.7, 'drill');
       rock(53.2, 58.4, 0.55, 'drill', 'b');
       ice(39.0, 50.4, 0.6, 'drill');
       pile(57.0, 54.6, 0.6, 'drill');
       lamp(40.6, 58.0, 'drill'); lamp(52.2, 50.4, 'drill');
+
+      // ---- East trail & frozen pond (outdoor hallway) ----
+      prop('pol_icepatch', 65.5, 55.3, 6.6, 3.6, { flat: true });
+      roundProp('pol_ice', 66.0, 54.6, 0.5, {});
+      roundProp('pol_rock', 72.0, 59.0, 0.6, { tint: 'b' });
+      roundProp('pol_snowpile', 61.0, 58.2, 0.55, {});
+      roundProp('pol_lamp', 62.4, 55.6, 0.42, {});
+
+      // ---- Signposts for the outdoor areas (floor labels are faint on snow) ----
+      S('pol_sign', 21.6, 13.1, 2.4, 0.35, 'dropship', { tint: 'Dropship' });
+      S('pol_sign', 24.2, 18.7, 2.4, 0.35, 'yard', { tint: 'Frost Yard' });
+      S('pol_sign', 71.0, 25.6, 2.4, 0.35, 'field', { tint: 'Ice Field' });
+      S('pol_sign', 36.6, 53.6, 2.4, 0.35, 'drill', { tint: 'Drill Site' });
 
       // ---- Specimens ----
       addStation('swipe', 'specimen', wallProp('cardslot', 'specimen', 76));

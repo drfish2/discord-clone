@@ -20,7 +20,13 @@ Controls: WASD / arrow keys to move, `E`/Space to use, `Q` kill, `R` report, `V`
 * Lobby with 4-letter game codes, public game list, colour picker, host-editable settings
   (impostors, kill cooldown, speed, vision, meeting timers, emergency meetings, task count,
   confirm ejects, kill distance).
-* A 14-room station with walls, line-of-sight vision, vents, an emergency button and a minimap.
+* Three maps, picked by the host in the lobby settings:
+  * **The Starship**: a 14-room spaceship with engines, reactor and a big cafeteria.
+  * **Polar Outpost**: a research base on a frozen planet, with buildings linked by snowy
+    trails, a dropship, a drill site and a seismic lab.
+  * **Sky Headquarters**: a compact HQ above the clouds, with a launchpad, a long
+    decontamination corridor, a greenhouse and one big vent network.
+* Line-of-sight vision, vents, an emergency button and a minimap on every map.
 * 12 task minigames (wires, card swipe, download, fuel, asteroids, engine alignment, distributor
   calibration, garbage, med scan, power diversion, O2 filter, reactor numbers).
 * Impostor kills with cooldown, venting, and four sabotages: reactor meltdown (two players
@@ -29,7 +35,7 @@ Controls: WASD / arrow keys to move, `E`/Space to use, `Q` kill, `R` report, `V`
 * Body reports, emergency meetings, discussion and voting with chat, ghost chat, ejection
   cinematic, and every win condition (tasks, votes, kills, sabotage, disconnects).
 * Host migration: if the host leaves, the next player takes over the running game.
-* Freeplay mode for solo practice.
+* Freeplay mode for solo practice on any map.
 
 ## Code
 

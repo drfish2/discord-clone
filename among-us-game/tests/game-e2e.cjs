@@ -62,8 +62,19 @@ async function waitFor(page, fn, arg, timeout = 15000) {
   check(new Set(colors).size === 5, 'all colours unique: ' + colors.join(','));
   await pages[2].screenshot({ path: path.join(shots, '02-lobby-guest.png') });
 
+  // map switching: every tab follows the host's pick
+  const mapList = await pages[0].evaluate(() => IS.map.list().map((m) => m.id));
+  check(mapList.length >= 3, 'maps registered: ' + mapList.join(','));
+  for (let mi = 1; mi < mapList.length; mi++) {
+    await pages[0].evaluate((i) => IS.client.act('set', Object.assign({}, IS.client.state().hs.st, { map: i })), mi);
+    for (let i = 0; i < 5; i++) check(await waitFor(pages[i], (id) => IS.map.id === id, mapList[mi]), `tab ${i} on map ${mapList[mi]}`);
+    await sleep(700);
+    await pages[3].screenshot({ path: path.join(shots, `02-lobby-${mapList[mi]}.png`) });
+  }
+  const PLAY_MAP = Number(process.env.MAP || 1);
+
   // fast settings, then start via the Start button
-  await pages[0].evaluate(() => IS.client.act('set', Object.assign({}, IS.client.state().hs.st, { dis: 0, vot: 30, kcd: 10, nt: 3 })));
+  await pages[0].evaluate((pm) => IS.client.act("set", Object.assign({}, IS.client.state().hs.st, { dis: 0, vot: 30, kcd: 10, nt: 3, map: pm })), PLAY_MAP);
   await sleep(500);
   await pages[0].click('button.start-btn');
   for (let i = 0; i < 5; i++) check(await waitFor(pages[i], () => IS.client.state().phase === 'roles' || IS.client.state().phase === 'play'), `tab ${i} left lobby`);

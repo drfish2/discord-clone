@@ -1063,7 +1063,10 @@
     S.mapOpen = !!open;
     if (!E.map) return;
     E.map.classList.toggle('on', S.mapOpen);
-    if (S.mapOpen) { layoutMap(); drawMap(); S.mapLast = nowMs(); }
+    if (S.mapOpen) {
+      txt(E.mapTitle, (IS.map && IS.map.name) || 'Ship map');
+      layoutMap(); drawMap(); S.mapLast = nowMs();
+    }
   }
   function setMapView(v) { S.mapView = v; }
 
