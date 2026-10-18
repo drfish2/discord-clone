@@ -77,7 +77,7 @@
     reactor: ['#5f6a82', '#59647b'], medbay: ['#a9c0cc', '#9fb6c3'], hall: ['#5d6883', '#58637d']
   };
   var FLOOR_IMG = { room: 'floor_room', tech: 'floor_tech', hall: 'floor_hall' };
-  var WALL_TOP = '#262e4a', WALL_TOP_HI = '#36406a';
+  var WALL_TOP = '#2e3758', WALL_TOP_HI = '#414c78';
   var WALL_FACE_A = '#6a789f', WALL_FACE_B = '#4a5679', WALL_BASE = '#2b3354';
 
   function cellAt(x, y) { var m = M(); if (x < 0 || y < 0 || x >= m.W || y >= m.H) return 0; return m.grid[y * m.W + x]; }
@@ -204,7 +204,7 @@
 
   function renderChunk(cx, cy, S) {
     var m = M();
-    var c0 = mk(CHUNK * S, CHUNK * S), c = c0.getContext('2d');
+    var c0 = mk(CHUNK * S, CHUNK * S), c = c0.getContext('2d', chunkOpaque(cx, cy) ? { alpha: false } : undefined);
     c.setTransform(S, 0, 0, S, -cx * CHUNK * S, -cy * CHUNK * S);
     var x0 = Math.floor(cx * CHUNK / T) - 1, y0 = Math.floor(cy * CHUNK / T) - 1;
     var x1 = Math.ceil((cx + 1) * CHUNK / T) + 1, y1 = Math.ceil((cy + 1) * CHUNK / T) + 1;
@@ -240,14 +240,19 @@
       var m = M(), nx = Math.ceil(m.W * T / CHUNK), ny = Math.ceil(m.H * T / CHUNK);
       emptyChunk = { nx: nx, ny: ny, a: new Uint8Array(nx * ny) };
       for (var j = 0; j < ny; j++) for (var i = 0; i < nx; i++) {
-        var any = false;
-        for (var y = Math.floor(j * CHUNK / T); y < Math.ceil((j + 1) * CHUNK / T) && !any; y++)
-          for (var x = Math.floor(i * CHUNK / T); x < Math.ceil((i + 1) * CHUNK / T); x++) if (cellAt(x, y) !== 0) { any = true; break; }
-        emptyChunk.a[j * nx + i] = any ? 1 : 0;
+        var any = false, all = true;
+        for (var y = Math.floor(j * CHUNK / T); y < Math.ceil((j + 1) * CHUNK / T); y++)
+          for (var x = Math.floor(i * CHUNK / T); x < Math.ceil((i + 1) * CHUNK / T); x++) { if (cellAt(x, y) !== 0) any = true; else all = false; }
+        emptyChunk.a[j * nx + i] = all ? 2 : any ? 1 : 0;
       }
     }
     if (cx < 0 || cy < 0 || cx >= emptyChunk.nx || cy >= emptyChunk.ny) return false;
-    return emptyChunk.a[cy * emptyChunk.nx + cx] === 1;
+    return emptyChunk.a[cy * emptyChunk.nx + cx] > 0;
+  }
+  function chunkOpaque(cx, cy) {
+    chunkHasContent(0, 0);
+    if (cx < 0 || cy < 0 || cx >= emptyChunk.nx || cy >= emptyChunk.ny) return false;
+    return emptyChunk.a[cy * emptyChunk.nx + cx] === 2;
   }
   function getChunk(cx, cy, S) {
     var key = cx + ',' + cy, c = chunks.get(key);
@@ -652,9 +657,13 @@
     var im = img(p.key);
     if (im) {
       var bw = p.w, bh = p.h + ext, ar = (im.naturalWidth || im.width) / (im.naturalHeight || im.height);
-      var dw = bw, dh = bw / ar;
-      if (dh > bh) { dh = bh; dw = bh * ar; }
-      c.drawImage(im, (bw - dw) / 2, p.h - dh, dw, dh);
+      if (p.flat) c.drawImage(im, 0, 0, p.w, p.h);           // e.g. vents: fill the footprint
+      else {
+        var dw = bw, dh = bw / ar;
+        if (dh > bh) { dh = bh; dw = bh * ar; }
+        var dy = p.wall ? (p.h - dh) / 2 : p.round ? Math.min(p.h - dh, (p.h - ext) / 2 - dh / 2 + ext * 0.1) : p.h - dh;
+        c.drawImage(im, (bw - dw) / 2, dy, dw, dh);
+      }
     } else if (DRAW[p.key]) {
       DRAW[p.key](c, p.w, p.h, ext, p);
     } else {
@@ -743,7 +752,7 @@
     c.scale(s * f, s);
     c.lineJoin = 'round'; c.lineCap = 'round';
     if (!ghost) { ell(c, 1, 0, 19, 5.5); c.fillStyle = 'rgba(0,0,0,0.28)'; c.fill(); }
-    if (ghost) { c.globalAlpha *= 0.5; c.translate(0, -8 + Math.sin(t * 2.2) * 3); }
+    if (ghost) { c.globalAlpha *= 0.5; c.translate(0, -8 + (opts.noBob ? 0 : Math.sin(t * 2.2) * 3)); }
     c.translate(0, bob);
     var outline = opts.outline || null;
 
@@ -800,6 +809,30 @@
       ell(c, 8, 2, 13, 4); c.fillStyle = 'rgba(160,20,30,0.55)'; c.fill();
     }
     c.restore();
+  }
+
+  // Cached crewmate sprites (per colour / facing / walk frame / ghost wave frame) for the world view.
+  var CREW_W = 84, CREW_H = 108, CREW_OX = 42, CREW_OY = 88;
+  function crewSprite(color, facing, frame, ghost, dead, outline, S) {
+    var key = 'crew|' + color + '|' + facing + '|' + frame + '|' + (ghost ? 1 : 0) + (dead ? 1 : 0) + '|' + (outline || '');
+    var sp = sprites.get(key);
+    if (sp) return sp;
+    var cv = mk(CREW_W * S, CREW_H * S), c = cv.getContext('2d');
+    c.scale(S, S);
+    var o = { facing: facing, dead: dead, ghost: ghost, outline: outline, noBob: true };
+    if (ghost) o.time = frame / 8 * (TAU / 6);
+    else if (frame >= 0) o.walk = frame / 8;
+    drawCrewmate(c, CREW_OX, CREW_OY, color, o);
+    sp = { c: cv };
+    sprites.set(key, sp);
+    return sp;
+  }
+  function blitCrew(c, x, y, color, opts, S) {
+    var ghost = !!opts.ghost, frame = -1, dy = 0;
+    if (ghost) { frame = Math.floor(((opts.time || 0) * 6 / TAU) * 8) % 8; dy = Math.sin((opts.time || 0) * 2.2) * 3; }
+    else if (typeof opts.walk === 'number') frame = Math.floor(opts.walk * 8) % 8;
+    var sp = crewSprite(color | 0, opts.facing < 0 ? -1 : 1, frame, ghost, !!opts.dead, opts.outline || '', S);
+    c.drawImage(sp.c, x - CREW_OX, y - CREW_OY + dy, CREW_W, CREW_H);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -883,42 +916,73 @@
   }
   function canSee(mx, my, R, x, y) {
     var dx = x - mx, dy = y - my, d = Math.sqrt(dx * dx + dy * dy);
-    if (d > R + 24) return false;
+    if (d > R * 0.95) return false;
     if (d < 1) return true;
     return !M().castRay(mx, my, dx / d, dy / d, d).hit;
   }
-  // Darkness: layer 1 = full-screen radial gradient (clear inside, fog beyond R); layer 2 = the
-  // shadow regions inside R that the visibility polygon does not reach, filled with the
-  // complementary gradient so both layers composite to exactly the outside-fog alpha.
+  // Darkness. Layer 1 = cached "light" sprite around me (clear centre, fog toward R) + solid fog
+  // rects for the rest of the screen. Layer 2 = the shadow regions inside R that the visibility
+  // polygon does not reach, filled with a cached complementary sprite (as a pattern) so the two
+  // layers composite to exactly the outside-fog alpha. Sprites are half-res (smooth gradients).
+  var fogSpr = { key: '', a: null, b: null };
+  var FOG_IN = 0.7;
+  function fogSprites(Rd, f, rgb) {
+    var key = Rd + '|' + f;
+    if (fogSpr.key === key) return fogSpr;
+    var D = Math.max(4, Math.ceil(Rd)), r = D / 2;
+    var a = mk(D, D), ac = a.getContext('2d');
+    var g = ac.createRadialGradient(r, r, 0, r, r, r);
+    g.addColorStop(0, 'rgba(' + rgb + '0)'); g.addColorStop(FOG_IN, 'rgba(' + rgb + '0)'); g.addColorStop(1, 'rgba(' + rgb + f + ')');
+    ac.fillStyle = g; ac.fillRect(0, 0, D, D);
+    var b = mk(D, D), bc = b.getContext('2d');
+    var g2 = bc.createRadialGradient(r, r, 0, r, r, r);
+    g2.addColorStop(0, 'rgba(' + rgb + f + ')');
+    for (var s = 0; s <= 8; s++) {
+      var u = s / 8, gv = f * u, a2 = (f - gv) / (1 - gv);
+      g2.addColorStop(FOG_IN + (1 - FOG_IN) * u, 'rgba(' + rgb + a2.toFixed(4) + ')');
+    }
+    bc.fillStyle = g2; bc.fillRect(0, 0, D, D);
+    fogSpr = { key: key, a: a, b: b, D: D };
+    return fogSpr;
+  }
   function drawFog(view, me, R, k, ox, oy) {
     var f = view.lights ? 0.9 : 0.8, rgb = view.lights ? '4,6,16,' : '5,8,20,';
-    var IN = 0.72;
-    ctx.setTransform(k, 0, 0, k, ox, oy);
-    var g = ctx.createRadialGradient(me.x, me.y, 0, me.x, me.y, R);
-    g.addColorStop(0, 'rgba(' + rgb + '0)'); g.addColorStop(IN, 'rgba(' + rgb + '0)'); g.addColorStop(1, 'rgba(' + rgb + f + ')');
-    ctx.fillStyle = g;
-    var wx0 = -ox / k, wy0 = -oy / k;
-    ctx.fillRect(wx0 - 2, wy0 - 2, devW / k + 4, devH / k + 4);
-    if (polyN < 3) return;
-    var g2 = ctx.createRadialGradient(me.x, me.y, 0, me.x, me.y, R);
-    g2.addColorStop(0, 'rgba(' + rgb + f + ')');
-    for (var s = 0; s <= 6; s++) {
-      var u = s / 6, gv = f * u, a2 = (f - gv) / (1 - gv);
-      g2.addColorStop(IN + (1 - IN) * u, 'rgba(' + rgb + a2.toFixed(4) + ')');
+    var fogCol = 'rgba(' + rgb + f + ')';
+    var Rd = Math.round(R * k);                       // radius in device px
+    var spr = fogSprites(Rd, f, rgb);                 // sprite is (Rd) px wide = half-res of 2*Rd
+    var mx = me.x * k + ox, my = me.y * k + oy;
+    var x0 = Math.round(mx - Rd), y0 = Math.round(my - Rd), x1 = x0 + 2 * Rd, y1 = y0 + 2 * Rd;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = fogCol;
+    if (y0 > 0) ctx.fillRect(0, 0, devW, y0);
+    if (y1 < devH) ctx.fillRect(0, y1, devW, devH - y1);
+    var ya = Math.max(0, y0), yb = Math.min(devH, y1);
+    if (yb > ya) {
+      if (x0 > 0) ctx.fillRect(0, ya, x0, yb - ya);
+      if (x1 < devW) ctx.fillRect(x1, ya, devW - x1, yb - ya);
     }
-    var E = R + 130;
-    ctx.save();
+    // light sprite minus its fully transparent centre square (4 strips)
+    var D = spr.D, q = Math.floor(D * (0.5 - FOG_IN * 0.69 / 2)), sc0 = 2 * Rd / D;
+    if (q < 2) ctx.drawImage(spr.a, x0, y0, 2 * Rd, 2 * Rd);
+    else {
+      ctx.drawImage(spr.a, 0, 0, D, q, x0, y0, D * sc0, q * sc0);
+      ctx.drawImage(spr.a, 0, D - q, D, q, x0, y0 + (D - q) * sc0, D * sc0, q * sc0);
+      ctx.drawImage(spr.a, 0, q, q, D - 2 * q, x0, y0 + q * sc0, q * sc0, (D - 2 * q) * sc0);
+      ctx.drawImage(spr.a, D - q, q, q, D - 2 * q, x0 + (D - q) * sc0, y0 + q * sc0, q * sc0, (D - 2 * q) * sc0);
+    }
+    if (polyN < 3) return;
+    var pat = ctx.createPattern(spr.b, 'no-repeat');
+    var sc = 2 * Rd / spr.D;
+    if (pat.setTransform && typeof DOMMatrix !== 'undefined') pat.setTransform(new DOMMatrix([sc, 0, 0, sc, x0, y0]));
     ctx.beginPath();
-    ctx.rect(me.x - E, me.y - E, E * 2, E * 2);
-    ctx.arc(me.x, me.y - 28, 38, 0, TAU);
-    ctx.clip('evenodd');
-    ctx.beginPath();
-    ctx.rect(me.x - E, me.y - E, E * 2, E * 2);
-    for (var i = 0; i < polyN; i++) { if (i) ctx.lineTo(polyX[i], polyY[i]); else ctx.moveTo(polyX[i], polyY[i]); }
+    ctx.rect(Math.max(0, x0), Math.max(0, y0), Math.min(devW, x1) - Math.max(0, x0), Math.min(devH, y1) - Math.max(0, y0));
+    for (var i = 0; i < polyN; i++) {
+      var px = polyX[i] * k + ox, py = polyY[i] * k + oy;
+      if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+    }
     ctx.closePath();
-    ctx.fillStyle = g2;
+    ctx.fillStyle = pat;
     ctx.fill('evenodd');
-    ctx.restore();
   }
 
   // ------------------------------------------------------------------------------------------
@@ -938,8 +1002,11 @@
     }
   }
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 3);
     var w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
+    // cap the backing store: DPR <= 2 and ~3.7 MP total (fill-rate bound on phones / 4K screens)
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var budget = 3.7e6;
+    if (w * h * dpr * dpr > budget) dpr = Math.max(1, Math.sqrt(budget / (w * h)));
     cssW = w; cssH = h;
     var dw = Math.round(w * dpr), dh = Math.round(h * dpr);
     if (canvas.width !== dw || canvas.height !== dh) { canvas.width = dw; canvas.height = dh; }
@@ -995,12 +1062,25 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
     ctx.imageSmoothingEnabled = true;
-    ctx.fillStyle = '#04060f'; ctx.fillRect(0, 0, devW, devH);
     var DBG = IS.render._dbg || {};
-    if (!DBG.noStars) drawStars(cam, k);
+    var cx0 = Math.floor(wx0 / CHUNK), cx1 = Math.floor(wx1 / CHUNK), cy0 = Math.floor(wy0 / CHUNK), cy1 = Math.floor(wy1 / CHUNK);
+    // space background only where a chunk can show it (saves a full-screen layer)
+    ctx.beginPath();
+    var needSky = false;
+    for (var qy = cy0; qy <= cy1; qy++) for (var qx = cx0; qx <= cx1; qx++) {
+      if (chunkOpaque(qx, qy) && !DBG.noChunks) continue;
+      var qsx = Math.round(ox + qx * CHUNK * k), qsy = Math.round(oy + qy * CHUNK * k);
+      ctx.rect(qsx, qsy, Math.round(ox + (qx + 1) * CHUNK * k) - qsx, Math.round(oy + (qy + 1) * CHUNK * k) - qsy);
+      needSky = true;
+    }
+    if (needSky) {
+      ctx.save(); ctx.clip();
+      ctx.fillStyle = '#04060f'; ctx.fillRect(0, 0, devW, devH);
+      if (!DBG.noStars) drawStars(cam, k);
+      ctx.restore();
+    }
 
     // static chunks (integer device rects → no seams)
-    var cx0 = Math.floor(wx0 / CHUNK), cx1 = Math.floor(wx1 / CHUNK), cy0 = Math.floor(wy0 / CHUNK), cy1 = Math.floor(wy1 / CHUNK);
     chunkCap = Math.max(16, (cx1 - cx0 + 2) * (cy1 - cy0 + 2) + 6);
     for (var cy = cy0; cy <= cy1; cy++) for (var cx = cx0; cx <= cx1; cx++) {
       if (!chunkHasContent(cx, cy) || DBG.noChunks) continue;
@@ -1024,7 +1104,7 @@
     var hlBody = null;
     if (hl) {
       if (hl.type === 'body') hlBody = hl;
-      else { var hp = findPropAt(hl.x, hl.y, hl.type); if (hp) marks.set(hp, ['#ffe94a', 1]); }
+      else if (hl.type !== 'player') { var hp = findPropAt(hl.x, hl.y, hl.type); if (hp) marks.set(hp, ['#ffe94a', 1]); }
     }
     marks.forEach(function (v, p) {
       if (!(p.flat || p.wall)) return;
@@ -1065,13 +1145,15 @@
         if (mk2) drawOutlined(ctx, e.p, S, mk2[0], mk2[1]); else drawPropSprite(ctx, e.p, S);
       } else if (e.b) {
         var glow = hlBody && Math.abs(hlBody.x - e.b.x) < 30 && Math.abs(hlBody.y - e.b.y) < 30;
-        drawCrewmate(ctx, e.b.x, e.b.y, e.b.color, { dead: true, facing: e.b.f || 1, outline: glow ? '#ffe94a' : null, time: t });
+        blitCrew(ctx, e.b.x, e.b.y, e.b.color, { dead: true, facing: e.b.f || 1, outline: glow ? '#ffe94a' : null }, S);
       } else {
         var pl2 = e.pl;
-        drawCrewmate(ctx, pl2.x, pl2.y, pl2.color, {
+        var tgt = hl && hl.type === 'player' && !pl2.isMe && Math.abs(hl.x - pl2.x) < 24 && Math.abs(hl.y - pl2.y) < 24;
+        blitCrew(ctx, pl2.x, pl2.y, pl2.color, {
           facing: pl2.f, ghost: !!pl2.ghost || pl2.alive === false,
-          walk: pl2.m ? ((t * 2.3 + (pl2.slot || 0) * 0.37) % 1) : undefined, time: t + (pl2.slot || 0)
-        });
+          walk: pl2.m ? (typeof pl2.walk === 'number' ? ((pl2.walk % 1) + 1) % 1 : ((t * 2.3 + (pl2.slot || 0) * 0.37) % 1)) : undefined,
+          time: t + (pl2.slot || 0), outline: tgt ? '#ff3b4a' : null
+        }, S);
       }
     }
 
@@ -1079,7 +1161,7 @@
     ctx.setTransform(k, 0, 0, k, ox, oy);
 
     // highlight ring when nothing to outline (e.g. fix point without prop)
-    if (hl && hl.type !== 'body' && !findPropAt(hl.x, hl.y, hl.type)) {
+    if (hl && hl.type !== 'body' && hl.type !== 'player' && !findPropAt(hl.x, hl.y, hl.type)) {
       ell(ctx, hl.x, hl.y, 26 + pulse * 4, 12 + pulse * 2);
       ctx.strokeStyle = 'rgba(255,233,74,0.9)'; ctx.lineWidth = 3; ctx.stroke();
     }

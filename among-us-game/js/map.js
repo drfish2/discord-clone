@@ -460,9 +460,11 @@
   // ------------------------------------------------------------------------------------------
   // dx,dy must be normalised. Returns {x,y,d,hit,cx,cy,side} side 0 = crossed a vertical
   // grid line (hit an east/west face), 1 = horizontal line (north/south face).
-  function castRay(x0, y0, dx, dy, maxd) {
+  // skipStart: if the origin is inside a wall, ignore walls until the ray reaches open floor.
+  function castRay(x0, y0, dx, dy, maxd, skipStart) {
     var cx = Math.floor(x0 / T), cy = Math.floor(y0 / T);
-    if (solidCell(cx, cy)) return { x: x0, y: y0, d: 0, hit: true, cx: cx, cy: cy, side: -1 };
+    var inside = solidCell(cx, cy);
+    if (inside && !skipStart) return { x: x0, y: y0, d: 0, hit: true, cx: cx, cy: cy, side: -1 };
     var stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1;
     var tdx = dx !== 0 ? Math.abs(T / dx) : Infinity, tdy = dy !== 0 ? Math.abs(T / dy) : Infinity;
     var tmx = dx > 0 ? ((cx + 1) * T - x0) / dx : dx < 0 ? (cx * T - x0) / dx : Infinity;
@@ -471,14 +473,17 @@
     for (var guard = 0; guard < 512; guard++) {
       if (tmx < tmy) { t = tmx; if (t > maxd) break; cx += stepX; tmx += tdx; side = 0; }
       else { t = tmy; if (t > maxd) break; cy += stepY; tmy += tdy; side = 1; }
-      if (solidCell(cx, cy)) return { x: x0 + dx * t, y: y0 + dy * t, d: t, hit: true, cx: cx, cy: cy, side: side };
+      if (solidCell(cx, cy)) {
+        if (!inside) return { x: x0 + dx * t, y: y0 + dy * t, d: t, hit: true, cx: cx, cy: cy, side: side };
+      } else inside = false;
     }
     return { x: x0 + dx * maxd, y: y0 + dy * maxd, d: maxd, hit: false, cx: cx, cy: cy, side: -1 };
   }
   function raycast(x0, y0, x1, y1) {
     var dx = x1 - x0, dy = y1 - y0, d = Math.sqrt(dx * dx + dy * dy);
-    if (d < 1e-9) return { x: x0, y: y0, d: 0, hit: solidCell(Math.floor(x0 / T), Math.floor(y0 / T)) };
-    return castRay(x0, y0, dx / d, dy / d, d);
+    if (d < 1e-9) return { x: x0, y: y0, d: 0, hit: false };
+    // an origin slightly inside a wall (e.g. eye height next to a top wall) is tolerated
+    return castRay(x0, y0, dx / d, dy / d, d, true);
   }
   // true if nothing blocks the straight line between the two points
   function lineOfSight(x0, y0, x1, y1) { return !raycast(x0, y0, x1, y1).hit; }

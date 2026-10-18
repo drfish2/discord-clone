@@ -76,14 +76,9 @@
     return null;
   }
   function roomName(stn) {
-    if (stn.room && IS.map.rooms) {
-      for (var i = 0; i < IS.map.rooms.length; i++) {
-        var r = IS.map.rooms[i];
-        if (r.id === stn.room) return r.name;
-      }
-    }
-    var r2 = IS.map.roomAt ? IS.map.roomAt(stn.x, stn.y) : null;
-    return r2 ? r2.name : (stn.room || '');
+    if (stn.room) return stn.room; // map.js stores the room's display name
+    var r = IS.map.roomAt ? IS.map.roomAt(stn.x, stn.y) : null;
+    return r ? r.name : '';
   }
 
   function fixPoints(kind) {
