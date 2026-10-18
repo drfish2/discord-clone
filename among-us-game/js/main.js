@@ -27,6 +27,7 @@
   var wasAlive = true;
   var votedSoundCount = 0;
   var near = null; // current interactables, recomputed each frame
+  var mapVer = -1; // IS.map.version we last spawned on
 
   // ---------------------------------------------------------------- helpers
   function now() { return IS.client && IS.client.now ? IS.client.now() : Date.now(); }
@@ -322,7 +323,7 @@
       IS.audio && IS.audio.unlock && IS.audio.unlock();
       IS.client.create({ name: o.name, color: o.color, free: 1 }).then(function () {
         enterGame();
-        setTimeout(function () { IS.client.act('start'); }, 400);
+        toast('Freeplay: pick a map in Settings, then press Start.');
       }).catch(function (e) { toast('Could not start freeplay: ' + (e && e.message || e)); });
     },
     onStart: function () { IS.client.act('start'); },
@@ -667,6 +668,10 @@
       var ph = phase(s);
       // reset optimistic task completions when a new game starts
       if (s.hs && localGame !== s.hs.gn) { localDone = {}; localGame = s.hs.gn; }
+      if (IS.map && IS.map.version !== mapVer) {
+        if (mapVer >= 0 && ph === 'lobby') toast('Map: ' + IS.map.name);
+        mapVer = IS.map.version; placeAtSpawn(s);
+      }
       move(s, dt);
       // follow camera
       var k = 1 - Math.pow(0.0001, dt);

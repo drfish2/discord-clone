@@ -560,6 +560,7 @@
 
   // ================================================================== LOBBY
   var SETTING_DEFS = [
+    { k: 'map', label: 'Map', type: 'seg', opts: null },
     { k: 'imp', label: 'Impostors', step: 1, fmt: function (v) { return String(v); } },
     { k: 'kcd', label: 'Kill cooldown', step: 2.5, fmt: function (v) { return v + 's'; } },
     { k: 'kd', label: 'Kill distance', type: 'seg', opts: ['Short', 'Medium', 'Long'] },
@@ -592,8 +593,13 @@
     sfx('click');
     fire('onSettings', st);
   }
+  function mapOpts() {
+    var L = IS.map && IS.map.list ? IS.map.list() : [];
+    return L.length ? L.map(function (m) { return m.short || m.name; }) : ['Starship'];
+  }
   function buildSettings() {
     var list = h('div.set-list');
+    SETTING_DEFS[0].opts = mapOpts();
     S.setRows = {};
     SETTING_DEFS.forEach(function (d) {
       var ro = h('span.set-ro');

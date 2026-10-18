@@ -8,7 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = { window: {}, Math, console };
 ctx.window.window = ctx.window;
 vm.createContext(ctx);
-for (const f of ['js/config.js', 'js/map.js']) {
+const mapFiles = fs.existsSync(path.join(root, 'js/maps')) ? fs.readdirSync(path.join(root, 'js/maps')).filter(f => f.endsWith('.js')).sort().map(f => 'js/maps/' + f) : [];
+for (const f of ['js/config.js', 'js/map.js', ...mapFiles]) {
   vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8').replace(/\bwindow\b/g, 'window'), ctx, { filename: f });
 }
 const IS = ctx.window.IS;
@@ -16,6 +17,12 @@ const M = IS.map, C = IS.CONFIG, T = C.TILE, R = C.PLAYER_RADIUS;
 let fails = 0;
 const fail = (m) => { fails++; console.log('FAIL', m); };
 
+const only = (process.argv.find(a => a.startsWith('--map=')) || '').slice(6);
+for (const info of M.list()) {
+if (only && info.id !== only) continue;
+M.select(info.id);
+console.log(`== map ${info.id} (${info.name}) ${M.W}x${M.H}`);
+const before = fails;
 if (process.argv.includes('--ascii')) {
   const ch = [' ', '.', '#'];
   const rows = [];
@@ -36,6 +43,16 @@ if (process.argv.includes('--ascii')) {
   for (let i = 0; i < 10; i++) { const s = M.spawn(i, 10); put(s.x, s.y, String(i)); }
   console.log(rows.map((r, i) => String(i).padStart(2) + ' ' + r).join('\n'));
 }
+
+// required fixtures
+const spawnRoom = M.roomAt(M.button.x, M.button.y)?.id;
+if (!spawnRoom) fail('emergency button is not inside a room');
+const fixCount = { reactor: 2, o2: 2, lights: 1, comms: 1 };
+for (const k in fixCount) if (!M.FIX[k] || M.FIX[k].length !== fixCount[k]) fail(`FIX.${k} needs ${fixCount[k]} points, has ${M.FIX[k] ? M.FIX[k].length : 0}`);
+if (M.STATIONS.length < 18) fail('fewer than 18 task stations: ' + M.STATIONS.length);
+if (M.vents.length < 6) fail('fewer than 6 vents: ' + M.vents.length);
+const kindSet = new Set(M.TASKS.map(t => t.kind));
+if (kindSet.size < 10) fail('fewer than 10 distinct task kinds: ' + [...kindSet].join(','));
 
 // --- reachability flood fill over "standable" positions on a fine lattice (8px) ---
 const STEP = 8;
@@ -111,7 +128,7 @@ for (let n = 1; n <= 10; n++) for (let s = 0; s < n; s++) {
   const p = M.spawn(s, n);
   if (!M.canStand(p.x, p.y, R) || !reachAt(p.x, p.y)) fail(`spawn ${s}/${n} bad`);
   for (let s2 = 0; s2 < s; s2++) { const q2 = M.spawn(s2, n); if (Math.hypot(q2.x - p.x, q2.y - p.y) < 2 * R) fail(`spawn overlap ${s},${s2} of ${n}`); }
-  if (M.roomAt(p.x, p.y)?.id !== 'cafeteria') fail('spawn not in cafeteria');
+  if (M.roomAt(p.x, p.y)?.id !== spawnRoom) fail('spawn not in the button room ' + spawnRoom);
 }
 // wall props must be on a front face (wall cell with floor south)
 M.props.filter(p => p.wall).forEach(p => {
@@ -147,14 +164,14 @@ for (let k = 0; k < 3000; k++) {
   }
 }
 if (tun) fail('tunnelling / stuck results: ' + tun);
-// sliding along a wall: push diagonally into the cafeteria top wall
-{
+// sliding along a wall: push diagonally into the cafeteria top wall (station map only)
+if (info.id === 'station') {
   const p0 = { x: 2208, y: 2 * T + R + 1 };
   const p1 = M.moveCircle(p0.x, p0.y, 100, -100, R);
   if (!(p1.x > p0.x + 90)) fail('no slide along wall ' + JSON.stringify(p1));
 }
 // raycast
-{
+if (info.id === 'station') {
   const h = M.raycast(2208, 480, 2208, -100);
   if (!h.hit || Math.abs(h.y - 2 * T) > 0.01) fail('raycast to top wall ' + JSON.stringify(h));
 }
@@ -169,5 +186,7 @@ if (tun) fail('tunnelling / stuck results: ' + tun);
 }
 
 console.log(`rooms ${M.rooms.length}, stations ${M.STATIONS.length}, tasks ${M.TASKS.length}, vents ${M.vents.length}, props ${M.props.length}, max station stand dist ${maxD.toFixed(1)}`);
+console.log(fails > before ? `map ${info.id}: ${fails - before} failures` : `map ${info.id}: OK`);
+}
 console.log(fails ? `${fails} FAILURES` : 'ALL OK');
 process.exit(fails ? 1 : 0);

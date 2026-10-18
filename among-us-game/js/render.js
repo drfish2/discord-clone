@@ -21,7 +21,7 @@
   var outlines = new Map();
   var starTile = null;
   var assetSig = '';
-  var frameNo = 0;
+  var frameNo = 0, lastMapVer = -1;
   var pendingS = 0, pendingN = 0;
   var mini = { key: '', c: null };
 
@@ -79,14 +79,67 @@
   var FLOOR_IMG = { room: 'floor_room', tech: 'floor_tech', hall: 'floor_hall' };
   var WALL_TOP = '#2e3758', WALL_TOP_HI = '#414c78';
   var WALL_FACE_A = '#6a789f', WALL_FACE_B = '#4a5679', WALL_BASE = '#2b3354';
+  var VOID = '#04060f';
+  // Per-map look: IS.map.theme = { bg: 'stars'|'snow'|'sky', void, hall: [a, b], hallFloor,
+  //   wall: {top, topHi, faceA, faceB, base} }. Rooms may carry their own tint: [a, b].
+  function applyTheme() {
+    var th = (M() && M().theme) || {}, w = th.wall || {};
+    WALL_TOP = w.top || '#2e3758'; WALL_TOP_HI = w.topHi || '#414c78';
+    WALL_FACE_A = w.faceA || '#6a789f'; WALL_FACE_B = w.faceB || '#4a5679'; WALL_BASE = w.base || '#2b3354';
+    VOID = th.void || (th.bg === 'snow' ? '#c9d6e6' : th.bg === 'sky' ? '#5d8fd0' : '#04060f');
+  }
 
   function cellAt(x, y) { var m = M(); if (x < 0 || y < 0 || x >= m.W || y >= m.H) return 0; return m.grid[y * m.W + x]; }
 
+  function drawFloorExtra(c, kind, th, x, y, px, py) {
+    var h1 = hash(x, y), h2 = hash(y + 7, x + 3), i;
+    if (kind === 'snow') {
+      c.fillStyle = th[0]; c.fillRect(px, py, T, T);
+      c.fillStyle = 'rgba(255,255,255,0.55)';
+      for (i = 0; i < 5; i++) c.fillRect(px + hash(x * 5 + i, y) * (T - 4), py + hash(y * 5 + i, x) * (T - 4), 2.5, 2.5);
+      c.fillStyle = 'rgba(80,110,160,0.10)';
+      if (h1 < 0.35) { c.beginPath(); c.ellipse(px + T * h2, py + T * h1 * 2, T * 0.45, T * 0.16, 0, 0, TAU); c.fill(); }
+      if (h2 < 0.06) { c.fillStyle = '#7c8799'; c.beginPath(); c.ellipse(px + 24, py + 30, 7, 4.5, 0, 0, TAU); c.fill(); c.fillStyle = 'rgba(255,255,255,0.7)'; c.fillRect(px + 20, py + 26, 7, 2); }
+    } else if (kind === 'carpet') {
+      c.fillStyle = ((x + y) & 1) ? th[1] : th[0]; c.fillRect(px, py, T, T);
+      c.fillStyle = 'rgba(255,255,255,0.06)';
+      for (i = 0; i < 4; i++) c.fillRect(px + 6 + i * 11, py + 6 + ((i & 1) ? 18 : 0), 5, 5);
+      c.fillStyle = 'rgba(0,0,0,0.08)'; c.fillRect(px, py + T - 1, T, 1); c.fillRect(px + T - 1, py, 1, T);
+    } else if (kind === 'wood') {
+      for (i = 0; i < 4; i++) {
+        var pyy = py + i * (T / 4), off = ((y * 4 + i) * 37 % 3) * 16;
+        c.fillStyle = (hash(x, y * 4 + i) < 0.5) ? th[0] : th[1]; c.fillRect(px, pyy, T, T / 4);
+        c.fillStyle = 'rgba(0,0,0,0.20)'; c.fillRect(px, pyy + T / 4 - 1.5, T, 1.5);
+        c.fillRect(px + (off + x * 16) % T, pyy, 1.5, T / 4);
+        c.fillStyle = 'rgba(255,255,255,0.07)'; c.fillRect(px, pyy, T, 1);
+      }
+    } else if (kind === 'grass') {
+      c.fillStyle = ((x + y) & 1) ? th[1] : th[0]; c.fillRect(px, py, T, T);
+      c.strokeStyle = 'rgba(20,60,20,0.35)'; c.lineWidth = 1.5;
+      for (i = 0; i < 6; i++) {
+        var gx = px + hash(x * 9 + i, y) * (T - 6) + 3, gy = py + hash(y * 9 + i, x) * (T - 8) + 6;
+        c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - 2, gy - 5); c.moveTo(gx, gy); c.lineTo(gx + 2, gy - 6); c.stroke();
+      }
+      if (h1 < 0.07) { c.fillStyle = h2 < 0.5 ? '#ffd84a' : '#ff8fc8'; c.beginPath(); c.arc(px + 20, py + 22, 3, 0, TAU); c.fill(); }
+    } else { // dirt
+      c.fillStyle = th[0]; c.fillRect(px, py, T, T);
+      c.fillStyle = 'rgba(0,0,0,0.10)';
+      for (i = 0; i < 6; i++) c.fillRect(px + hash(x * 3 + i, y * 2) * (T - 5), py + hash(y * 3 + i, x * 2) * (T - 5), 4, 3);
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      for (i = 0; i < 4; i++) c.fillRect(px + hash(x + i * 11, y) * (T - 3), py + hash(y + i * 11, x) * (T - 3), 2, 2);
+    }
+  }
+
   function drawFloorCell(c, x, y) {
     var m = M(), ri = m.cellRoom[y * m.W + x], room = ri >= 0 ? m.rooms[ri] : null;
-    var kind = room ? room.floor : 'hall';
-    var th = THEME[room ? room.id : 'hall'] || THEME.hall;
+    var mth = m.theme || {};
+    var kind = room ? room.floor : (mth.hallFloor || 'hall');
+    var th = (room && room.tint) || (room && !mth.hall && THEME[room.id]) || mth.hall || THEME.hall;
     var px = x * T, py = y * T;
+    if (kind === 'snow' || kind === 'carpet' || kind === 'wood' || kind === 'grass' || kind === 'dirt') {
+      drawFloorExtra(c, kind, th, x, y, px, py);
+      return;
+    }
     var im = img(FLOOR_IMG[kind]);
     if (im) {
       c.drawImage(im, px, py, T, T);
@@ -840,6 +893,8 @@
   // ------------------------------------------------------------------------------------------
   function getStarTile() {
     if (starTile) return starTile;
+    var bg = ((M() && M().theme) || {}).bg || 'stars';
+    if (bg === 'snow' || bg === 'sky') { starTile = makeBgTile(bg); return starTile; }
     var im = img('stars');
     if (im) { starTile = { c: im, w: im.naturalWidth || im.width, h: im.naturalHeight || im.height }; return starTile; }
     var N = 512, cv = mk(N, N), c = cv.getContext('2d');
@@ -862,6 +917,44 @@
     c.globalAlpha = 1;
     starTile = { c: cv, w: N, h: N };
     return starTile;
+  }
+  function makeBgTile(bg) {
+    var N = 512, cv = mk(N, N), c = cv.getContext('2d'), i;
+    if (bg === 'snow') {
+      // frozen ground around the outpost: soft drifts, rocks and footprint-like pits
+      c.fillStyle = '#d3deea'; c.fillRect(0, 0, N, N);
+      for (i = 0; i < 40; i++) {
+        var x = hash(i, 3) * N, y = hash(3, i) * N, r = 30 + hash(i, i) * 80;
+        for (var dx = -N; dx <= N; dx += N) for (var dy = -N; dy <= N; dy += N) {
+          var g = c.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+          g.addColorStop(0, i & 1 ? 'rgba(255,255,255,0.55)' : 'rgba(150,175,205,0.30)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+          c.fillStyle = g; c.fillRect(0, 0, N, N);
+        }
+      }
+      for (i = 0; i < 26; i++) {
+        var rx = hash(i, 11) * N, ry = hash(11, i) * N, rs = 6 + hash(i, 13) * 16;
+        c.fillStyle = '#6f7b8f'; c.beginPath(); c.ellipse(rx, ry, rs, rs * 0.62, hash(i, 2) * 3, 0, TAU); c.fill();
+        c.fillStyle = 'rgba(255,255,255,0.85)'; c.beginPath(); c.ellipse(rx - rs * 0.15, ry - rs * 0.3, rs * 0.7, rs * 0.28, 0, 0, TAU); c.fill();
+      }
+      for (i = 0; i < 400; i++) { c.fillStyle = 'rgba(255,255,255,0.8)'; c.fillRect(hash(i, 21) * N, hash(21, i) * N, 2, 2); }
+    } else {
+      // high above the clouds
+      var sky = c.createLinearGradient(0, 0, 0, N);
+      sky.addColorStop(0, '#6aa1e0'); sky.addColorStop(1, '#4f80c4');
+      c.fillStyle = sky; c.fillRect(0, 0, N, N);
+      for (i = 0; i < 22; i++) {
+        var cx = hash(i, 5) * N, cy = hash(5, i) * N, cw = 50 + hash(i, 8) * 90;
+        for (var ex = -N; ex <= N; ex += N) for (var ey = -N; ey <= N; ey += N) {
+          c.fillStyle = 'rgba(255,255,255,' + (0.35 + hash(i, 4) * 0.45).toFixed(2) + ')';
+          for (var j = 0; j < 5; j++) {
+            c.beginPath();
+            c.ellipse(cx + ex + (j - 2) * cw * 0.28, cy + ey + Math.sin(j * 1.7) * cw * 0.07, cw * 0.3, cw * 0.18, 0, 0, TAU);
+            c.fill();
+          }
+        }
+      }
+    }
+    return { c: cv, w: N, h: N };
   }
   function drawStars(cam, k) {
     var st = getStarTile();
@@ -996,9 +1089,11 @@
         'prop_reactor', 'prop_plant', 'prop_chair', 'prop_screen', 'prop_barrel', 'vent', 'button', 'stars'].forEach(function (k) { sig += img(k) ? '1' : '0'; });
     }
     try { if (document.fonts && document.fonts.check) sig += document.fonts.check('20px ' + fontD()) ? 'F' : 'f'; } catch (e) { /* ignore */ }
+    sig += '|' + ((M() && M().id) || '') + ':' + ((M() && M().version) || 0);
     if (sig !== assetSig) {
       assetSig = sig;
       chunks.clear(); sprites.clear(); outlines.clear(); starTile = null; mini.key = '';
+      applyTheme();
     }
   }
   function resize() {
@@ -1040,7 +1135,8 @@
     if (!ctx || !M()) return;
     view = view || {};
     resize();
-    if ((frameNo++ % 30) === 0) checkAssets();
+    var mv = (M() && M().version) || 0;
+    if ((frameNo++ % 30) === 0 || mv !== lastMapVer) { lastMapVer = mv; checkAssets(); }
     var m = M();
     var me = view.me || null;
     var zoom = view.zoom || defaultZoom(cssW, cssH);
@@ -1075,7 +1171,7 @@
     }
     if (needSky) {
       ctx.save(); ctx.clip();
-      ctx.fillStyle = '#04060f'; ctx.fillRect(0, 0, devW, devH);
+      ctx.fillStyle = VOID; ctx.fillRect(0, 0, devW, devH);
       if (!DBG.noStars) drawStars(cam, k);
       ctx.restore();
     }
@@ -1328,7 +1424,18 @@
     for (var j = 0; j < ny; j++) for (var i = 0; i < nx; i++) if (chunkHasContent(i, j) && chunks.size < 40) getChunk(i, j, S);
   }
 
+  // Maps can add their own vector props: draw(c, w, h, ext, p) paints a w×h footprint at the
+  // origin, raised by ext px (drawn above the footprint). Sprites are cached per key/size/tint.
+  function registerProp(key, draw, ext) {
+    DRAW[key] = draw;
+    if (ext) EXT[key] = ext;
+    sprites.clear(); outlines.clear(); chunks.clear();
+  }
+
   IS.render = {
+    registerProp: registerProp,
+    kit: { box: box, cylinder: cylinder, screen: screen, hazard: hazard, rr: rr, ell: ell, fillStroke: fillStroke,
+      shade: shade, hash: hash, OL: OL, SCREEN: SCREEN, TAU: TAU },
     init: init,
     frame: frame,
     drawCrewmate: drawCrewmate,

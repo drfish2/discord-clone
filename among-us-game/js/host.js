@@ -27,7 +27,7 @@
   var PHASES = ['lobby', 'roles', 'play', 'meeting', 'eject', 'over'];
   var SAB_KINDS = ['reactor', 'o2', 'lights', 'comms'];
   var CRITICAL = { reactor: 1, o2: 1 };
-  var INT_KEYS = { imp: 1, kcd: 1, dis: 1, vot: 1, emg: 1, nt: 1, conf: 1, kd: 1, free: 1, fr: 1 };
+  var INT_KEYS = { map: 1, imp: 1, kcd: 1, dis: 1, vot: 1, emg: 1, nt: 1, conf: 1, kd: 1, free: 1, fr: 1 };
   var EXTRA_LIMITS = { fr: [0, 1] };
 
   var absentSince = Object.create(null);

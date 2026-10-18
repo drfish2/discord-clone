@@ -546,6 +546,8 @@
   function computeView() {
     var hs = S.hs;
     if (!S.room || !hs) return emptyState();
+    // everyone plays on the map the host picked (settings.map is an index into IS.map.list())
+    if (IS.map && IS.map.select && hs.st) IS.map.select(hs.st.map | 0);
     var me = myPeer(), pm = presMap(), slot = mySlot();
     var myE = slot >= 0 ? hs.pl[slot] : null;
     var myRole = myE ? myE[3] : -1;
@@ -572,7 +574,7 @@
     var bodies = hs.bd.map(function (b) { return { slot: b[0], x: b[1], y: b[2], color: hs.pl[b[0]] ? hs.pl[b[0]][1] : 0 }; });
     var myTasks = [];
     if (myE && hs.ph !== 'lobby' && IS.map && typeof IS.map.assignTasks === 'function') {
-      var tk = hs.sd + ':' + slot + ':' + myE[5];
+      var tk = hs.sd + ':' + slot + ':' + myE[5] + ':' + (IS.map.id || '');
       if (tk !== S.tasksKey) {
         S.tasksKey = tk;
         try { S.tasks = IS.map.assignTasks(hs.sd, slot, myE[5]) || []; } catch (x) { S.tasks = []; }

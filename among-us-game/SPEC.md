@@ -6,7 +6,7 @@ an IIFE that attaches its public API to the global namespace `window.IS`
 (`window.IS = window.IS || {}` at the top of each file).
 
 Script load order (index.html): `config.js, assets.js, net.js, host.js, client.js, map.js,
-render.js, tasks.js, ui.js, main.js`. A module may only *call* other modules at runtime (inside
+render.js, maps/*.js, tasks.js, ui.js, main.js`. A module may only *call* other modules at runtime (inside
 functions), never at load time, except for reading `IS.CONFIG`.
 
 For release, `tools/build.mjs` inlines everything (scripts, CSS, and assets as data URIs) into one
@@ -107,7 +107,7 @@ the game survives the host leaving. The host recomputes and republishes `hs` ~8�
   now: 1729200000000, // host Date.now() at publish
   ph: "lobby",        // "lobby"|"roles"|"play"|"meeting"|"eject"|"over"
   pe: 0,              // phase end (host time) for timed phases (roles, meeting, eject), else 0
-  st: {imp:1, kcd:25, spd:1, cvis:1, ivis:1.5, dis:15, vot:45, emg:1, nt:5, conf:1, kd:1, free:0},
+  st: {map:0, imp:1, kcd:25, spd:1, cvis:1, ivis:1.5, dis:15, vot:45, emg:1, nt:5, conf:1, kd:1, free:0},
   sd: 12345,          // seed (task assignment + spawn shuffle) — new on each start
   pl: [               // slot table; index = slot. Lobby: every present player gets a slot (max 10).
     // [peer, colour, alive, role, doneMask, nTasks, conn]
@@ -210,6 +210,15 @@ IS.map.assignTasks(seed, slot, n) -> [taskId,...]
 IS.map.roomAt(x, y) -> room|null
 IS.map.raycast(x0, y0, x1, y1) -> {x, y}  // first wall hit (for vision)
 ```
+
+Multiple maps: `IS.map.define(id, def)` registers a map (map.js defines `station`; `js/maps/*.js`
+add more), `IS.map.select(idOrIndex)` builds it once and copies its fields onto `IS.map` (bumping
+`IS.map.version`), `IS.map.list()` → `[{id, name, short, blurb, index}]`. The host's
+`settings.map` is an index into that list; client.js selects it on every state update, main.js
+respawns players when `IS.map.version` changes. Per-map look comes from `IS.map.theme`
+(`bg: 'stars'|'snow'|'sky'`, `void`, `hall`, `hallFloor`, `wall`), room `floor` kinds
+(`room|tech|hall|snow|carpet|wood|grass|dirt`) and room `tint`. Map files may add vector props
+with `IS.render.registerProp(key, draw, ext)`.
 
 ### 4.4 `IS.render` (render.js)
 ```js

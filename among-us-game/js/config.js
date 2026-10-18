@@ -26,10 +26,10 @@
     EJECT_TIME: 7, // seconds
     ROLE_TIME: 4.5,
 
-    DEFAULT_SETTINGS: { imp: 1, kcd: 25, spd: 1, cvis: 1, ivis: 1.5, dis: 15, vot: 45, emg: 1, nt: 5, conf: 1, kd: 1, free: 0 },
+    DEFAULT_SETTINGS: { map: 0, imp: 1, kcd: 25, spd: 1, cvis: 1, ivis: 1.5, dis: 15, vot: 45, emg: 1, nt: 5, conf: 1, kd: 1, free: 0 },
     // [min, max] clamps used by host.js when applying `set`
     SETTINGS_LIMITS: {
-      imp: [1, 3], kcd: [10, 60], spd: [0.5, 2], cvis: [0.25, 2], ivis: [0.25, 2.5],
+      map: [0, 9], imp: [1, 3], kcd: [10, 60], spd: [0.5, 2], cvis: [0.25, 2], ivis: [0.25, 2.5],
       dis: [0, 60], vot: [15, 120], emg: [0, 3], nt: [1, 10], conf: [0, 1], kd: [0, 2], free: [0, 1]
     },
 
