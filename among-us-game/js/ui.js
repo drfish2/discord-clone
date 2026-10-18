@@ -600,6 +600,9 @@
     // hero
     E.heroCv = h('canvas.logo-crew', { 'aria-hidden': 'true' });
     E.status = h('div.status', { role: 'status' }, [h('span.dot'), E.statusTxt = h('span', { text: 'Connecting to the ship…' })]);
+    E.connBtn = h('button.ui-btn.ui-btn--sm.conn-btn', { type: 'button', text: 'Allow online play', hidden: true });
+    E.connBtn.addEventListener('click', function () { sfx('click'); fire('onAllowOnline'); });
+    E.status.appendChild(E.connBtn);
     var hero = h('div.menu-hero', null, [
       h('div.logo', null, [E.heroCv, h('h1.logo-text', { 'aria-label': 'Starship Sus' }, [h('span.l1', { text: 'Starship' }), h('span.l2', { text: 'Sus' })])]),
       h('p.logo-tag', { text: 'Find the Impostor before it’s too late. 3–10 players, right in your browser.' }),
@@ -1731,11 +1734,26 @@
     local: 'Local mode (not connected online) — only other tabs of this browser can join',
     offline: 'Offline — Freeplay only'
   };
+  // Online-room problems (room mode): missing permission, a refused connection, or no link yet.
+  function setConn(c) {
+    S.conn = c || null;
+    if (!E.status || !c || c.mode !== 'room') { if (E.connBtn) E.connBtn.hidden = true; return; }
+    var text = null, btn = null;
+    if (c.permission === 'prompt') { text = 'Online play needs your permission'; btn = 'Allow online play'; }
+    else if (c.permission === 'denied') { text = 'Online play is turned off for this page'; btn = 'Open permissions'; }
+    else if (c.error) text = 'Couldn\u2019t connect to online play (' + c.error + ')';
+    else if (c.connected === 'n') text = 'Connecting to online play\u2026';
+    E.connBtn.hidden = !btn;
+    if (btn) txt(E.connBtn, btn);
+    if (text) { E.status.className = 'status st-wait'; txt(E.statusTxt, text); }
+    else if (!S.inConn) setMode(S.mode);
+  }
   function setMode(m) {
     S.mode = m;
     if (!E.status) return;
     E.status.className = 'status st-' + (MODE_TEXT[m] ? m : 'wait');
     txt(E.statusTxt, MODE_TEXT[m] || 'Connecting to the ship…');
+    if (S.conn && !S.inConn) { S.inConn = true; setConn(S.conn); S.inConn = false; }
     syncMenuButtons();
     renderGames();
   }
@@ -1870,6 +1888,7 @@
     showScreen: showScreen,
     setGameList: function (list) { S.games = Array.isArray(list) ? list : []; renderGames(); },
     setMode: setMode,
+    setConn: setConn,
     updateLobby: updateLobby,
     updateHud: updateHud,
     showRole: showRole,

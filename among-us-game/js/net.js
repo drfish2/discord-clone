@@ -342,6 +342,16 @@
     net.lobby = localJoin('__lobby__');
   }
 
+  // Connection state of the claude room (room mode only): cn = connected(), ce = terminal error.
+  net.status = { cn: null, ce: '' };
+  var statusFns = [];
+  function setStatus(k, v) {
+    if (net.status[k] === v) return;
+    net.status[k] = v;
+    for (var i = 0; i < statusFns.length; i++) { try { statusFns[i](net.status); } catch (e) { /* ignore */ } }
+  }
+  net.onStatus = function (fn) { if (typeof fn === 'function') statusFns.push(fn); };
+
   function init() {
     if (initP) return initP;
     initP = tryRoom().then(function (r) {
@@ -349,6 +359,9 @@
         rawRoom = r;
         net.mode = 'room';
         net.lobby = wrapRoom(r, true);
+        try {
+          r.onConnection(function (c) { setStatus('cn', !!c); }, function (e) { setStatus('ce', (e && e.code) || 'error'); });
+        } catch (e) { setStatus('ce', 'no_onConnection'); }
         try { net.lobby.onPeers(function () { net.lobby.peers(); }); } catch (e) { /* ignore */ }
         net.lobby.peers();
       } else if (lkUsable()) {

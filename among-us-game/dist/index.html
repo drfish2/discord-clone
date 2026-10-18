@@ -621,6 +621,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
 }
+
+.status .conn-btn{margin-left:10px;padding:4px 12px;font-size:13px;min-height:0}
+.status .conn-btn[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -2362,6 +2365,16 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     net.lobby = localJoin('__lobby__');
   }
 
+  // Connection state of the claude room (room mode only): cn = connected(), ce = terminal error.
+  net.status = { cn: null, ce: '' };
+  var statusFns = [];
+  function setStatus(k, v) {
+    if (net.status[k] === v) return;
+    net.status[k] = v;
+    for (var i = 0; i < statusFns.length; i++) { try { statusFns[i](net.status); } catch (e) { /* ignore */ } }
+  }
+  net.onStatus = function (fn) { if (typeof fn === 'function') statusFns.push(fn); };
+
   function init() {
     if (initP) return initP;
     initP = tryRoom().then(function (r) {
@@ -2369,6 +2382,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         rawRoom = r;
         net.mode = 'room';
         net.lobby = wrapRoom(r, true);
+        try {
+          r.onConnection(function (c) { setStatus('cn', !!c); }, function (e) { setStatus('ce', (e && e.code) || 'error'); });
+        } catch (e) { setStatus('ce', 'no_onConnection'); }
         try { net.lobby.onPeers(function () { net.lobby.peers(); }); } catch (e) { /* ignore */ }
         net.lobby.peers();
       } else if (lkUsable()) {
@@ -3028,7 +3044,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
   // Connection diagnostics, published as the lobby presence field `dg` (counts and codes only)
   // so a failing join can be diagnosed from the outside. See diag() below.
-  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0 };
+  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0, cn: '', ce: '', pr: '' };
   function diagSet(k, v) { if (D[k] !== v) { D[k] = v; if (S.lobby) updateLobbyPresence(); } }
 
   function safePresence(room, patch, retry) {
@@ -3091,7 +3107,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       gc: hosting ? S.hs.pl.length : null, gp: hosting ? S.hs.ph : null,
       gm: hosting ? CFG().MAX_PLAYERS : null,
       dg: { md: S.mode || '', cd: S.code || '', ho: S.amHost ? 1 : 0, lp: D.lp, gl: D.gl, pe: D.pe, hs: D.hs,
-        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb }
+        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb, cn: D.cn, ce: D.ce, pr: D.pr }
     };
     var key = JSON.stringify(p);
     if (key === S.lobbyKey) return;
@@ -3130,13 +3146,38 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     }
   }
 
+  // The room capability may need the viewer's consent; read it without prompting.
+  var perms = null, connFns = [];
+  function emitConn() { for (var i = 0; i < connFns.length; i++) { try { connFns[i](conn()); } catch (e) { /* ignore */ } } }
+  function conn() { return { mode: S.mode, connected: D.cn, error: D.ce, permission: D.pr, others: D.lp }; }
+  function checkPermission() {
+    var c = window.claude;
+    if (!c || typeof c.use !== 'function') return Promise.resolve('');
+    return Promise.resolve(perms || c.use('permissions')).then(function (p) {
+      perms = p;
+      if (!p || typeof p.state !== 'function') return '';
+      return p.state('room');
+    }).then(function (s) { D.pr = s || ''; updateLobbyPresence(); emitConn(); return s; }, function () { return ''; });
+  }
+  // From a click: ask for the room permission, or open the Permissions panel if it was declined.
+  function allowOnline() {
+    if (!perms) return checkPermission();
+    var p = D.pr === 'denied' && typeof perms.manage === 'function' ? perms.manage() : perms.request(['room']);
+    return Promise.resolve(p).then(checkPermission, checkPermission);
+  }
+
   function boot() {
     if (S.booted) return S.booted;
     S.booted = IS.net.init().then(function (r) {
       S.mode = r.mode;
       S.lobby = IS.net.lobby;
+      if (IS.net.onStatus) {
+        var st = function (s) { D.cn = s.cn === null ? '' : s.cn ? 'y' : 'n'; D.ce = s.ce || ''; updateLobbyPresence(); emitConn(); };
+        IS.net.onStatus(st); st(IS.net.status || {});
+      }
       updateLobbyPresence();
-      S.lobby.onPeers(onLobbyPeers);
+      S.lobby.onPeers(onLobbyPeers, function (e) { D.ce = (e && e.code) || 'error'; updateLobbyPresence(); emitConn(); });
+      if (r.mode === 'room') checkPermission();
       return { mode: r.mode };
     });
     return S.booted;
@@ -3618,6 +3659,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },
+    onConn: function (fn) { if (typeof fn === 'function') { connFns.push(fn); fn(conn()); } },
+    allowOnline: allowOnline,
     diag: function () { var o = {}; for (var k in D) o[k] = D[k]; o.md = S.mode || ''; return o; },
     on: function (evt, fn) {
       if (!listeners[evt] || typeof fn !== 'function') return function () {};
@@ -9206,6 +9249,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     // hero
     E.heroCv = h('canvas.logo-crew', { 'aria-hidden': 'true' });
     E.status = h('div.status', { role: 'status' }, [h('span.dot'), E.statusTxt = h('span', { text: 'Connecting to the ship…' })]);
+    E.connBtn = h('button.ui-btn.ui-btn--sm.conn-btn', { type: 'button', text: 'Allow online play', hidden: true });
+    E.connBtn.addEventListener('click', function () { sfx('click'); fire('onAllowOnline'); });
+    E.status.appendChild(E.connBtn);
     var hero = h('div.menu-hero', null, [
       h('div.logo', null, [E.heroCv, h('h1.logo-text', { 'aria-label': 'Starship Sus' }, [h('span.l1', { text: 'Starship' }), h('span.l2', { text: 'Sus' })])]),
       h('p.logo-tag', { text: 'Find the Impostor before it’s too late. 3–10 players, right in your browser.' }),
@@ -10337,11 +10383,26 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     local: 'Local mode (not connected online) — only other tabs of this browser can join',
     offline: 'Offline — Freeplay only'
   };
+  // Online-room problems (room mode): missing permission, a refused connection, or no link yet.
+  function setConn(c) {
+    S.conn = c || null;
+    if (!E.status || !c || c.mode !== 'room') { if (E.connBtn) E.connBtn.hidden = true; return; }
+    var text = null, btn = null;
+    if (c.permission === 'prompt') { text = 'Online play needs your permission'; btn = 'Allow online play'; }
+    else if (c.permission === 'denied') { text = 'Online play is turned off for this page'; btn = 'Open permissions'; }
+    else if (c.error) text = 'Couldn\u2019t connect to online play (' + c.error + ')';
+    else if (c.connected === 'n') text = 'Connecting to online play\u2026';
+    E.connBtn.hidden = !btn;
+    if (btn) txt(E.connBtn, btn);
+    if (text) { E.status.className = 'status st-wait'; txt(E.statusTxt, text); }
+    else if (!S.inConn) setMode(S.mode);
+  }
   function setMode(m) {
     S.mode = m;
     if (!E.status) return;
     E.status.className = 'status st-' + (MODE_TEXT[m] ? m : 'wait');
     txt(E.statusTxt, MODE_TEXT[m] || 'Connecting to the ship…');
+    if (S.conn && !S.inConn) { S.inConn = true; setConn(S.conn); S.inConn = false; }
     syncMenuButtons();
     renderGames();
   }
@@ -10476,6 +10537,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     showScreen: showScreen,
     setGameList: function (list) { S.games = Array.isArray(list) ? list : []; renderGames(); },
     setMode: setMode,
+    setConn: setConn,
     updateLobby: updateLobby,
     updateHud: updateHud,
     showRole: showRole,
@@ -11411,6 +11473,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     onVote: function (slot) { IS.client.act('vote', slot); play('vote'); },
     onChat: function (text) { IS.client.chat(text); },
     onEmergency: function () { var s = st(); if (s && amAlive(s)) IS.client.act('emg'); },
+    onAllowOnline: function () { if (IS.client.allowOnline) IS.client.allowOnline(); },
     onMute: function (m) { if (IS.audio && IS.audio.setMuted) IS.audio.setMuted(m); }
   };
 
@@ -11874,6 +11937,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       IS.ui.addChat({ name: m.name, color: m.color, text: m.text, dead: !!m.dead, isMe: !!m.isMe });
     });
     if (IS.client.onGames) IS.client.onGames(function (list) { IS.ui.setGameList(list); });
+    if (IS.client.onConn && IS.ui.setConn) IS.client.onConn(function (c) { IS.ui.setConn(c); });
     IS.client.boot().then(function (r) {
       if (IS.ui.setMode) IS.ui.setMode(r && r.mode || 'offline');
     }).catch(function () { if (IS.ui.setMode) IS.ui.setMode('offline'); });

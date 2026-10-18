@@ -369,6 +369,7 @@
     onVote: function (slot) { IS.client.act('vote', slot); play('vote'); },
     onChat: function (text) { IS.client.chat(text); },
     onEmergency: function () { var s = st(); if (s && amAlive(s)) IS.client.act('emg'); },
+    onAllowOnline: function () { if (IS.client.allowOnline) IS.client.allowOnline(); },
     onMute: function (m) { if (IS.audio && IS.audio.setMuted) IS.audio.setMuted(m); }
   };
 
@@ -832,6 +833,7 @@
       IS.ui.addChat({ name: m.name, color: m.color, text: m.text, dead: !!m.dead, isMe: !!m.isMe });
     });
     if (IS.client.onGames) IS.client.onGames(function (list) { IS.ui.setGameList(list); });
+    if (IS.client.onConn && IS.ui.setConn) IS.client.onConn(function (c) { IS.ui.setConn(c); });
     IS.client.boot().then(function (r) {
       if (IS.ui.setMode) IS.ui.setMode(r && r.mode || 'offline');
     }).catch(function () { if (IS.ui.setMode) IS.ui.setMode('offline'); });

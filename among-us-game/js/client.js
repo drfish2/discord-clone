@@ -70,7 +70,7 @@
 
   // Connection diagnostics, published as the lobby presence field `dg` (counts and codes only)
   // so a failing join can be diagnosed from the outside. See diag() below.
-  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0 };
+  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0, cn: '', ce: '', pr: '' };
   function diagSet(k, v) { if (D[k] !== v) { D[k] = v; if (S.lobby) updateLobbyPresence(); } }
 
   function safePresence(room, patch, retry) {
@@ -133,7 +133,7 @@
       gc: hosting ? S.hs.pl.length : null, gp: hosting ? S.hs.ph : null,
       gm: hosting ? CFG().MAX_PLAYERS : null,
       dg: { md: S.mode || '', cd: S.code || '', ho: S.amHost ? 1 : 0, lp: D.lp, gl: D.gl, pe: D.pe, hs: D.hs,
-        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb }
+        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb, cn: D.cn, ce: D.ce, pr: D.pr }
     };
     var key = JSON.stringify(p);
     if (key === S.lobbyKey) return;
@@ -172,13 +172,38 @@
     }
   }
 
+  // The room capability may need the viewer's consent; read it without prompting.
+  var perms = null, connFns = [];
+  function emitConn() { for (var i = 0; i < connFns.length; i++) { try { connFns[i](conn()); } catch (e) { /* ignore */ } } }
+  function conn() { return { mode: S.mode, connected: D.cn, error: D.ce, permission: D.pr, others: D.lp }; }
+  function checkPermission() {
+    var c = window.claude;
+    if (!c || typeof c.use !== 'function') return Promise.resolve('');
+    return Promise.resolve(perms || c.use('permissions')).then(function (p) {
+      perms = p;
+      if (!p || typeof p.state !== 'function') return '';
+      return p.state('room');
+    }).then(function (s) { D.pr = s || ''; updateLobbyPresence(); emitConn(); return s; }, function () { return ''; });
+  }
+  // From a click: ask for the room permission, or open the Permissions panel if it was declined.
+  function allowOnline() {
+    if (!perms) return checkPermission();
+    var p = D.pr === 'denied' && typeof perms.manage === 'function' ? perms.manage() : perms.request(['room']);
+    return Promise.resolve(p).then(checkPermission, checkPermission);
+  }
+
   function boot() {
     if (S.booted) return S.booted;
     S.booted = IS.net.init().then(function (r) {
       S.mode = r.mode;
       S.lobby = IS.net.lobby;
+      if (IS.net.onStatus) {
+        var st = function (s) { D.cn = s.cn === null ? '' : s.cn ? 'y' : 'n'; D.ce = s.ce || ''; updateLobbyPresence(); emitConn(); };
+        IS.net.onStatus(st); st(IS.net.status || {});
+      }
       updateLobbyPresence();
-      S.lobby.onPeers(onLobbyPeers);
+      S.lobby.onPeers(onLobbyPeers, function (e) { D.ce = (e && e.code) || 'error'; updateLobbyPresence(); emitConn(); });
+      if (r.mode === 'room') checkPermission();
       return { mode: r.mode };
     });
     return S.booted;
@@ -660,6 +685,8 @@
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },
+    onConn: function (fn) { if (typeof fn === 'function') { connFns.push(fn); fn(conn()); } },
+    allowOnline: allowOnline,
     diag: function () { var o = {}; for (var k in D) o[k] = D[k]; o.md = S.mode || ''; return o; },
     on: function (evt, fn) {
       if (!listeners[evt] || typeof fn !== 'function') return function () {};
