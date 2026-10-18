@@ -401,7 +401,7 @@
       var count = 0;
       if (s.hs && s.hs.pl) for (var k = 0; k < s.hs.pl.length; k++) if (s.hs.pl[k][3] === 1) count++;
       if (p) IS.ui.showRole({ role: p.role === 1 ? 'imp' : 'crew', impostors: imps, count: count });
-      play('role');
+      play(p && p.role === 1 ? 'role_imp' : 'role'); // impostors get their own sting
       wasAlive = true;
     } else if (to === 'play') {
       IS.ui.showScreen('game');

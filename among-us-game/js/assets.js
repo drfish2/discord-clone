@@ -40,6 +40,7 @@
       sabotage: 'assets/sfx/sabotage.mp3',
       sab_alarm: 'assets/sfx/sab_alarm.wav',
       emergency: 'assets/sfx/emergency.mp3',
+      role_imp: 'assets/sfx/role_imp.mp3',
       win: 'assets/sfx/win.mp3',
       lose: 'assets/sfx/lose.mp3',
       step: 'assets/sfx/step.mp3',

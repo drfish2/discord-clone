@@ -84,4 +84,5 @@ Kenney assets above. Replace them before distributing the game if you don't have
 |---|---|---|---|
 | `sab_alarm` | `sfx/sab_alarm.wav` | "Sabotage Alarm Among Us Crisis - Sound Effect for editing" (uploaded) | one 2.0 s period cut for a seamless loop, mono 22 kHz, +7 dB |
 | `kill` | `sfx/kill.mp3` | "Among Us Kill Sound Effect shorts" (uploaded; replaced the Kenney knife/impact mix) | trimmed to 0.95 s with fade-out, mono |
+| `role_imp` | `sfx/role_imp.mp3` | "Among Us Impostor Sound Effect" (uploaded; plays on the role reveal when you are the impostor) | trimmed to 4.1 s with fade-out, mono, +4 dB |
 | `emergency` | `sfx/emergency.mp3` | "Emergency Meeting Call Among us pushing red button - Sound Effect for editing" (uploaded) | leading silence trimmed, 2.1 s with fade-out, mono, +8 dB |
