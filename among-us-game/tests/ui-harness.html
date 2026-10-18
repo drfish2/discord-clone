@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>UI harness</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;700&display=swap">
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+<div id="ui-layer"></div>
+<div id="task-layer"></div>
+<script>
+// UI test harness: pulls the inline <style> from ../index.html, loads config + optional render/map + ui.js,
+// then exposes window.scene(name) to drive every screen with fake data. Handler calls go to window.calls.
+window.calls = [];
+function loadScript(src) {
+  return new Promise(function (res) {
+    var s = document.createElement('script'); s.src = src;
+    s.onload = function () { res(true); }; s.onerror = function () { res(false); };
+    document.body.appendChild(s);
+  });
+}
+window.harnessReady = (async function () {
+  var html = await (await fetch('../index.html')).text();
+  var m = html.match(/<style>([\s\S]*?)<\/style>/);
+  var st = document.createElement('style'); st.textContent = m ? m[1] : ''; document.head.appendChild(st);
+  await loadScript('../js/config.js');
+  window.hasMap = await loadScript('../js/map.js');
+  window.hasRender = await loadScript('../js/render.js');
+  await loadScript('../js/ui.js');
+  var names = ['onCreate','onJoin','onFreeplay','onStart','onSettings','onColor','onLeave','onAgain','onUse','onReport','onKill','onSabotage','onVent','onMap','onVote','onChat','onEmergency','onMute'];
+  var handlers = {};
+  names.forEach(function (n) { handlers[n] = function (a) { window.calls.push([n, a === undefined ? null : JSON.parse(JSON.stringify(a))]); }; });
+  handlers.onMap = function () { window.calls.push(['onMap', null]); window.__map = !window.__map; IS.ui.showMap(window.__map); };
+  IS.ui.init(handlers);
+  IS.ui.showScreen('menu');
+  try { if (IS.render && IS.render.init) IS.render.init(document.getElementById('game-canvas')); } catch (e) { console.warn(e); }
+  return true;
+})();
+
+// fake world behind lobby / game
+function paintWorld() {
+  var cv = document.getElementById('game-canvas');
+  var w = innerWidth, h = innerHeight, d = devicePixelRatio || 1;
+  cv.width = w * d; cv.height = h * d;
+  var ctx = cv.getContext('2d'); ctx.scale(d, d);
+  ctx.fillStyle = '#05070f'; ctx.fillRect(0, 0, w, h);
+  var T = 48;
+  for (var y = 0; y < h; y += T) for (var x = 0; x < w; x += T) {
+    var inRoom = x > w * 0.08 && x < w * 0.92 && y > h * 0.12 && y < h * 0.9;
+    if (!inRoom) continue;
+    ctx.fillStyle = ((x / T + y / T) % 2) ? '#7d8595' : '#737b8b'; ctx.fillRect(x, y, T, T);
+  }
+  ctx.fillStyle = '#3c4256'; ctx.fillRect(w * 0.08, h * 0.12 - 40, w * 0.84, 40);
+  ctx.fillStyle = '#9aa3b5'; ctx.beginPath(); ctx.ellipse(w / 2, h / 2, 110, 60, 0, 0, 7); ctx.fill();
+  var dc = IS.render && IS.render.drawCrewmate;
+  [[0.42, 0.62, 0], [0.58, 0.45, 1], [0.5, 0.7, 3], [0.36, 0.42, 5]].forEach(function (p) {
+    if (dc) IS.render.drawCrewmate(ctx, w * p[0], h * p[1], p[2], { facing: 1 });
+  });
+}
+var NAMES = ['Muneeb', 'Astro42', 'Nova', 'Pixel', 'Comet', 'Zappy', 'Blip', 'Luna', 'Rover', 'Quasar'];
+function lobbyPlayers(n) {
+  var a = [];
+  for (var i = 0; i < n; i++) a.push({ slot: i, name: NAMES[i], color: [3, 0, 1, 5, 10, 8, 4, 7, 11, 2][i], isMe: i === 0, isHost: i === 0 });
+  return a;
+}
+function meetPlayers(phase, n) {
+  n = n || 10;
+  var ps = lobbyPlayers(n).map(function (p) {
+    return { slot: p.slot, name: p.name, color: p.color, alive: p.slot !== 4 && p.slot !== 7, isMe: p.isMe, voted: phase !== 'discuss' && p.slot % 3 === 1, canVote: phase === 'vote', caller: p.slot === 2 };
+  });
+  return ps;
+}
+window.scene = function (name) {
+  var ui = IS.ui;
+  if (name !== 'chat') { ui.hideOverlays(); ui.hideMeeting(); }
+  switch (name) {
+    case 'menu':
+      ui.showScreen('menu'); ui.setMode('room');
+      ui.setGameList([{ code: 'QXBT', host: 'Astro42', count: 4, max: 10, phase: 'lobby' }, { code: 'MZKP', host: 'Captain Nova', count: 8, max: 10, phase: 'play' }, { code: 'HHJW', host: 'Pixel', count: 10, max: 10, phase: 'lobby' }]);
+      break;
+    case 'menu-empty':
+      ui.showScreen('menu'); ui.setMode('local'); ui.setGameList([]); break;
+    case 'menu-offline':
+      ui.showScreen('menu'); ui.setMode('offline'); ui.setGameList([]); break;
+    case 'lobby-host':
+      paintWorld(); ui.showScreen('lobby');
+      ui.updateLobby({ code: 'QXBT', isHost: true, players: lobbyPlayers(2), settings: IS.CONFIG.DEFAULT_SETTINGS, canStart: false, mode: 'room' });
+      break;
+    case 'lobby-host-settings':
+      paintWorld(); ui.showScreen('lobby');
+      ui.updateLobby({ code: 'QXBT', isHost: true, players: lobbyPlayers(6), settings: IS.CONFIG.DEFAULT_SETTINGS, canStart: true, mode: 'room' });
+      document.querySelectorAll('.panel-tab')[1].click();
+      break;
+    case 'lobby-guest':
+      paintWorld(); ui.showScreen('lobby');
+      var pl = lobbyPlayers(7); pl[0].isHost = false; pl[2].isHost = true;
+      ui.updateLobby({ code: 'MZKP', isHost: false, players: pl, settings: IS.CONFIG.DEFAULT_SETTINGS, canStart: true, mode: 'local' });
+      break;
+    case 'game-crew':
+      paintWorld(); ui.showScreen('game');
+      ui.updateHud({ role: 'crew', alive: true, tasks: [{ name: 'Fix Wiring', room: 'Electrical', done: true }, { name: 'Swipe Card', room: 'Admin', done: false }, { name: 'Download Data', room: 'Comms', done: false }, { name: 'Fuel Engines', room: 'Storage', done: false }, { name: 'Clear Asteroids', room: 'Weapons', done: true }],
+        progress: 0.42, hidden: false, buttons: { use: { on: true, label: 'USE' }, report: { on: false }, kill: { on: false, cd: 0, show: false }, sabotage: { on: false, show: false }, vent: { on: false, show: false }, map: { on: true } }, sabotage: { k: 'reactor', remain: 32 }, freeplay: false });
+      break;
+    case 'game-imp':
+      paintWorld(); ui.showScreen('game');
+      ui.updateHud({ role: 'imp', alive: true, tasks: [{ name: 'Fix Wiring', room: 'Electrical', done: false }, { name: 'Swipe Card', room: 'Admin', done: false }],
+        progress: 0.7, hidden: false, buttons: { use: { on: false, label: 'USE' }, report: { on: true }, kill: { on: false, cd: 18, show: true }, sabotage: { on: true, cd: 0, show: true }, vent: { on: true, show: true }, map: { on: true } }, sabotage: { k: 'lights', remain: null }, freeplay: true });
+      break;
+    case 'game-ghost':
+      paintWorld(); ui.showScreen('game');
+      ui.updateHud({ role: 'crew', alive: false, tasks: [{ name: 'Fix Wiring', room: 'Electrical', done: true }], progress: 0.2, hidden: true,
+        buttons: { use: { on: false, label: 'USE' }, report: { on: false }, kill: { on: false }, sabotage: { on: false }, vent: { on: false }, map: { on: true } }, sabotage: { k: 'comms', remain: null } });
+      break;
+    case 'sabmenu':
+      scene('game-imp'); ui.showSabotageMenu(true); break;
+    case 'map':
+      scene('game-crew'); window.__map = true; ui.showMap(true); break;
+    case 'role-crew':
+      paintWorld(); ui.updateLobby({ code: 'QXBT', isHost: true, players: lobbyPlayers(8), settings: IS.CONFIG.DEFAULT_SETTINGS, canStart: true });
+      ui.showScreen('game'); ui.showRole({ role: 'crew', impostors: [], count: 2 }); break;
+    case 'role-imp':
+      paintWorld(); ui.showScreen('game'); ui.showRole({ role: 'imp', impostors: [{ name: 'Muneeb', color: 3 }, { name: 'Pixel', color: 5 }], count: 2 }); break;
+    case 'splash-body':
+      ui.showScreen('game');
+      ui.showMeeting({ by: { name: 'Nova', color: 1 }, body: { name: 'Comet', color: 10 }, players: meetPlayers('discuss'), phase: 'discuss', remain: 12, myVote: -2 });
+      break;
+    case 'splash-emg':
+      ui.showScreen('game');
+      ui.showMeeting({ by: { name: 'Nova', color: 1 }, body: null, players: meetPlayers('discuss'), phase: 'discuss', remain: 12, myVote: -2 });
+      break;
+    case 'meeting-discuss':
+      ui.showScreen('game');
+      ui.showMeeting({ by: { name: 'Nova', color: 1 }, body: null, players: meetPlayers('discuss'), phase: 'discuss', remain: 12, myVote: -2 });
+      break;
+    case 'meeting-vote':
+      ui.showScreen('game');
+      ui.showMeeting({ by: { name: 'Nova', color: 1 }, body: null, players: meetPlayers('discuss'), phase: 'discuss', remain: 2, myVote: -2 });
+      ui.updateMeeting({ by: { name: 'Nova', color: 1 }, body: null, players: meetPlayers('vote'), phase: 'vote', remain: 40, myVote: -2, canVote: true });
+      break;
+    case 'meeting-result':
+      ui.showScreen('game');
+      ui.showMeeting({ by: { name: 'Nova', color: 1 }, body: { name: 'Comet', color: 10 }, players: meetPlayers('vote'), phase: 'vote', remain: 40, myVote: -2, canVote: true });
+      ui.updateMeeting({ by: { name: 'Nova', color: 1 }, body: { name: 'Comet', color: 10 }, players: meetPlayers('result'), phase: 'result', remain: 0, myVote: 3,
+        votes: { '3': [3, 0, 5], '1': [1], '-1': [8, 11] } });
+      break;
+    case 'chat':
+      ui.addChat({ name: 'Nova', color: 1, text: 'Where was the body?', dead: false, isMe: false });
+      ui.addChat({ name: 'Muneeb', color: 3, text: 'In electrical. I saw Pixel vent!!', dead: false, isMe: true });
+      ui.addChat({ name: 'Comet', color: 10, text: 'it was yellow, trust me', dead: true, isMe: false });
+      ui.addChat({ name: 'Pixel', color: 5, text: 'I was doing wires the whole time, that is a lie and a very long message to test wrapping', dead: false, isMe: false });
+      break;
+    case 'eject':
+      ui.showScreen('game'); ui.showEjection({ name: 'Pixel', color: 5, text: 'Pixel was An Impostor.\n1 Impostor remains.' }); break;
+    case 'eject-skip':
+      ui.showScreen('game'); ui.showEjection({ name: '', color: -1, text: 'No one was ejected. (Skipped)' }); break;
+    case 'over-win':
+      ui.showScreen('game'); ui.updateLobby({ code: 'QXBT', isHost: true, players: lobbyPlayers(8), settings: IS.CONFIG.DEFAULT_SETTINGS, canStart: true });
+      ui.showGameOver({ winner: 'crew', reason: 'tasks', youWon: true, isHost: true, players: lobbyPlayers(8).map(function (p, i) { return { name: p.name, color: p.color, role: i === 3 || i === 5 ? 1 : 0, alive: i !== 4 }; }) });
+      break;
+    case 'over-lose':
+      ui.showScreen('game');
+      ui.showGameOver({ winner: 'imp', reason: 'Impostors sabotaged the reactor', youWon: false, isHost: false, players: lobbyPlayers(8).map(function (p, i) { return { name: p.name, color: p.color, role: i === 3 || i === 5 ? 1 : 0, alive: i !== 5 }; }) });
+      break;
+  }
+};
+</script>
+</body>
+</html>

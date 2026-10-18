@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Net Harness</title>
+<style>
+  body { background: #0b1020; color: #e8ecff; font: 13px/1.4 monospace; margin: 16px; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h3>Starship Sus — net harness</h3>
+<pre id="out">booting…</pre>
+<script src="../js/config.js"></script>
+<script>
+  // Minimal IS.map stub (only what client.js uses).
+  (function () {
+    var IS = (window.IS = window.IS || {});
+    IS.map = {
+      TASKS: [{ id: 't0' }, { id: 't1' }, { id: 't2' }, { id: 't3' }, { id: 't4' }, { id: 't5' }, { id: 't6' }, { id: 't7' }, { id: 't8' }, { id: 't9' }],
+      assignTasks: function (seed, slot, n) {
+        var out = [];
+        for (var i = 0; i < n; i++) out.push('t' + ((seed + slot * 3 + i) % 10));
+        return out;
+      },
+      spawn: function (slot) { return { x: 1000 + slot * 30, y: 1000 }; }
+    };
+  })();
+</script>
+<script src="../js/net.js"></script>
+<script src="../js/host.js"></script>
+<script src="../js/client.js"></script>
+<script>
+  (function () {
+    var LOG = (window.LOG = { phases: [], chats: [], kicked: [], states: 0, games: [] });
+    var out = document.getElementById('out');
+    IS.client.on('phase', function (e) { LOG.phases.push(e.to); });
+    IS.client.on('chat', function (m) { LOG.chats.push(m); });
+    IS.client.on('kicked', function (m) { LOG.kicked.push(m); });
+    IS.client.on('state', function (s) {
+      LOG.states++;
+      out.textContent = JSON.stringify({
+        me: IS.client.me(), host: IS.client.isHost(), code: s.code, phase: s.phase, mySlot: s.mySlot,
+        myRole: s.myRole, players: s.players.map(function (p) { return [p.slot, p.name, p.color, p.alive, p.conn]; })
+      }, null, 1);
+    });
+    window.BOOT = IS.client.boot().then(function (r) {
+      IS.client.onGames(function (l) { LOG.games = l; });
+      out.textContent = 'mode: ' + r.mode + ' peer: ' + IS.net.myPeer;
+      return r;
+    });
+  })();
+</script>
+</body>
+</html>

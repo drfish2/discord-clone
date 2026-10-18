@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tasks harness</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;600&display=swap">
+<style>
+body{margin:0;background:#0b1020;color:#e8ecff;font-family:Rubik,system-ui,sans-serif;min-height:100vh}
+#bar{padding:8px;display:flex;flex-wrap:wrap;gap:6px}
+#bar button{font:13px system-ui;padding:6px 10px;border-radius:8px;border:2px solid #05070f;background:#ffcc33}
+#log{white-space:pre;font:12px monospace;padding:8px;opacity:.7}
+</style></head>
+<body>
+<div id="bar"></div>
+<div id="task-layer"></div>
+<div id="log"></div>
+<script src="../js/config.js"></script>
+<script src="../js/tasks.js"></script>
+<script>
+window.LOG = [];
+function log(s){ LOG.push(s); document.getElementById('log').textContent = LOG.slice(-12).join('\n'); }
+window.cbs = function(tag){ return {
+  onComplete: function(){ log(tag+':complete'); },
+  onClose: function(){ log(tag+':close'); },
+  onHold: function(h){ log(tag+':hold:'+h); }
+}; };
+window.openTask = function(k){ window.CTRL = IS.tasks.open(k, {title: k.toUpperCase()+' TASK', color: 3}, cbs(k)); return true; };
+window.openFix = function(k, part){ window.CTRL = IS.tasks.openFix(k, part||0, cbs('fix-'+k)); return true; };
+var bar = document.getElementById('bar');
+IS.tasks.KINDS.forEach(function(k){ var b=document.createElement('button'); b.textContent=k; b.onclick=function(){openTask(k)}; bar.appendChild(b); });
+['reactor','o2','lights','comms'].forEach(function(k){ var b=document.createElement('button'); b.textContent='fix '+k; b.onclick=function(){openFix(k,0)}; bar.appendChild(b); });
+</script>
+</body></html>
