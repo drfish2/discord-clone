@@ -28,6 +28,19 @@
   var votedSoundCount = 0;
   var near = null; // current interactables, recomputed each frame
   var mapVer = -1; // IS.map.version we last spawned on
+  // Remote players arrive ~20 times a second; draw them gliding toward the latest position
+  // instead of stepping. Big jumps (spawn, vent, kill snap) are shown instantly.
+  var shown = {}; // peer -> {x, y}
+  var frameDt = 0;
+  function smoothed(o) {
+    var p = shown[o.peer];
+    if (!p || Math.abs(o.x - p.x) + Math.abs(o.y - p.y) > 180) p = shown[o.peer] = { x: o.x, y: o.y };
+    else {
+      var k = 1 - Math.exp(-frameDt * 18);
+      p.x += (o.x - p.x) * k; p.y += (o.y - p.y) * k;
+    }
+    return p;
+  }
 
   // ---------------------------------------------------------------- helpers
   function now() { return IS.client && IS.client.now ? IS.client.now() : Date.now(); }
@@ -368,6 +381,7 @@
     if (IS.ui.hideMeeting) IS.ui.hideMeeting();
     try { IS.client.leave(); } catch (e) { /* ignore */ }
     inGame = false;
+    shown = {};
     IS.ui.showScreen('menu');
   }
 
@@ -614,8 +628,9 @@
         var isMe = o.isMe;
         var ghost = phase(s) !== 'lobby' && !o.alive;
         if (ghost && myAlive && !isMe) continue; // living players can't see ghosts
+        var sp = isMe ? me : smoothed(o);
         players.push({
-          slot: o.slot, peer: o.peer, x: isMe ? me.x : o.x, y: isMe ? me.y : o.y,
+          slot: o.slot, peer: o.peer, x: sp.x, y: sp.y,
           f: isMe ? me.f : o.f, m: isMe ? me.m : o.m, walk: isMe ? walkPhase : undefined,
           color: o.color, hat: o.hat, speaking: speaking(o.peer), alive: !!o.alive || phase(s) === 'lobby', name: o.name,
           role: (imp || isMe) ? o.role : undefined, ghost: ghost, inVent: isMe ? !!me.vt : !!o.vt, isMe: isMe
@@ -682,6 +697,7 @@
     requestAnimationFrame(frame);
     var dt = Math.min(0.05, (t - (lastTime || t)) / 1000);
     lastTime = t;
+    frameDt = dt;
     var s = inGame ? st() : null;
 
     if (!inGame) {
@@ -812,7 +828,7 @@
     requestAnimationFrame(frame);
   }
 
-  IS.main = { _me: me, _near: function () { return near; }, _debug: { doUse: doUse, doKill: doKill, doReport: doReport, doVent: doVent } };
+  IS.main = { _me: me, _near: function () { return near; }, _shown: function () { return shown; }, _debug: { doUse: doUse, doKill: doKill, doReport: doReport, doVent: doVent } };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
