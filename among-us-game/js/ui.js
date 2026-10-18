@@ -209,6 +209,10 @@
   }
 
   // Lineup of crewmates (role reveal, game over). people: [{color,name,isMe,ghost}]
+  function lineupBase(n, w, hAvail, nameSpace) {
+    var spanK = Math.max(0, n - 1);
+    return Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
+  }
   function drawLineup(cv, people, o) {
     o = o || {};
     var w = cv.clientWidth, hh = cv.clientHeight;
@@ -218,24 +222,38 @@
     var n = people.length;
     if (!n) return;
     var arr = people.slice().sort(function (a, b) { return (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0); });
+    var nameSpace = o.names ? 26 : 6;
+    var single = lineupBase(n, w, hh, nameSpace);
+    if (n > 4 && single < 1.35 && hh > 240) {
+      // two rows: back row (higher, slightly dimmer) then front row with me in the middle
+      var nf = Math.ceil(n / 2);
+      var front = arr.slice(0, nf), back = arr.slice(nf);
+      var rowH = hh * 0.56;
+      drawLineupRow(ctx, w, rowH, hh - rowH * 0.62, back, o, nameSpace, 0.12);
+      drawLineupRow(ctx, w, rowH, hh - nameSpace - 6, front, o, nameSpace, 0);
+    } else {
+      drawLineupRow(ctx, w, hh, hh - nameSpace - 6, arr, o, nameSpace, 0);
+    }
+  }
+  function drawLineupRow(ctx, w, hAvail, feetY, arr, o, nameSpace, dim) {
+    var n = arr.length;
+    if (!n) return;
     var slots = [];
     for (var i = 0; i < n; i++) slots.push({ p: arr[i], k: i === 0 ? 0 : (i % 2 ? -Math.ceil(i / 2) : Math.ceil(i / 2)) });
-    var nameSpace = o.names ? 26 : 6;
     var minK = 0, maxK = 0;
     slots.forEach(function (s) { minK = Math.min(minK, s.k); maxK = Math.max(maxK, s.k); });
     var spanK = maxK - minK;
     // fit height, and fit width: total extent = spanK*spacing + ~56*base, with spacing = 46*base
-    var base = Math.min((hh - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hh / 165);
+    var base = Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
     var spacing = base * 46;
     var shift = -(minK + maxK) / 2 * spacing;
-    var feetY = hh - nameSpace - 6;
     slots.sort(function (a, b) { return Math.abs(b.k) - Math.abs(a.k); });
     for (var j = 0; j < slots.length; j++) {
       var sl = slots[j], ak = Math.abs(sl.k);
       var sc = base * (1 - 0.045 * ak);
       var x = w / 2 + shift + sl.k * spacing, y = feetY - ak * base * 3;
       ctx.save();
-      try { ctx.filter = 'brightness(' + (1 - 0.07 * ak).toFixed(2) + ')'; } catch (e) { /* unsupported */ }
+      try { ctx.filter = 'brightness(' + (1 - dim - 0.07 * ak).toFixed(2) + ')'; } catch (e) { /* unsupported */ }
       drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost });
       ctx.restore();
       if (o.names && sl.p.name) {

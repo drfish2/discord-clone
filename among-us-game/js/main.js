@@ -412,7 +412,7 @@
       showMeetingNow(s, true);
     } else if (to === 'eject') {
       // reveal votes briefly, then ejection cinematic
-      var mt = lastMeeting;
+      var mt = (s.hs && s.hs.mt) || lastMeeting;
       if (mt) IS.ui.updateMeeting(meetingView(s, mt, 'result'));
       ejectTimer = setTimeout(function () {
         var s2 = st();
@@ -453,7 +453,8 @@
     var players = s.players.map(function (o) {
       var v = mt.vt ? mt.vt[o.slot] : -2;
       return {
-        slot: o.slot, name: o.name, color: o.color, alive: !!o.alive && o.conn !== 0, isMe: o.isMe,
+        slot: o.slot, name: o.name, color: o.color, isMe: o.isMe,
+        alive: (!!o.alive || (ph === 'result' && !!s.hs.ej && s.hs.ej.s === o.slot)) && o.conn !== 0,
         voted: v !== -2 && v !== undefined, canVote: ph === 'vote' && !!(p && p.alive) && mine === -2 && !!o.alive,
         caller: o.slot === mt.by
       };
