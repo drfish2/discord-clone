@@ -47,6 +47,12 @@
   function play(k, o) { if (IS.audio && IS.audio.play) IS.audio.play(k, o); }
   function st() { return IS.client && IS.client.state ? IS.client.state() : null; }
   function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+  function diagText() {
+    var d = IS.client.diag ? IS.client.diag() : null;
+    if (!d) return '';
+    return ' (seen in that room: ' + d.rp + ' other tab' + (d.rp === 1 ? '' : 's') + ', ' + d.rh + ' with a game' +
+      (d.rb ? ', ' + d.rb + ' unreadable' : '') + '; ' + d.lp + ' in the lobby, ' + d.gl + ' open game' + (d.gl === 1 ? '' : 's') + ')';
+  }
   function speaking(peer) { return !!(peer && IS.voice && IS.voice.isSpeaking && IS.voice.isSpeaking(peer)); }
   function colorName(i) { return (C.COLORS[i] || C.COLORS[0])[0]; }
   function playerBySlot(s, slot) {
@@ -333,7 +339,7 @@
           var mode = IS.net && IS.net.mode;
           if (m === 'not_found') {
             toast(mode === 'room' || mode === 'livekit'
-              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.'
+              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.' + diagText()
               : 'No game ' + o.code + ' in this browser. You\u2019re in Local mode (not connected online), so you can only join games hosted in other tabs of this browser.');
           } else toast(m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
         });

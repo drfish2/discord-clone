@@ -3031,12 +3031,21 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
   function myPeer() { return IS.net && IS.net.myPeer; }
 
+  // Connection diagnostics, published as the lobby presence field `dg` (counts and codes only)
+  // so a failing join can be diagnosed from the outside. See diag() below.
+  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0 };
+  function diagSet(k, v) { if (D[k] !== v) { D[k] = v; if (S.lobby) updateLobbyPresence(); } }
+
   function safePresence(room, patch, retry) {
     if (!room) return;
+    var tag = room === S.lobby ? 'L' : 'G';
     try {
       var p = room.presence(patch);
+      if (p && typeof p.then === 'function' && patch.hs) p.then(function () { diagSet('hs', 'ok'); }, function () {});
       if (p && typeof p.catch === 'function') {
         p.catch(function (e) {
+          diagSet('pe', tag + ':' + String((e && e.code) || (e && e.message) || 'err').slice(0, 24));
+          if (patch.hs) diagSet('hs', 'rej');
           if (retry || !e || e.code !== 'invalid_argument' || room !== S.room) return;
           // Too big: shed chat history, then actions, and try again.
           S.chs = S.chs.slice(-1); S.acts = S.acts.slice(-4);
@@ -3047,7 +3056,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
           safePresence(room, q, true);
         });
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) { diagSet('pe', tag + ':throw'); }
   }
 
   function setPres(patch) {
@@ -3085,7 +3094,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var p = {
       v: 1, n: S.name || '', g: hosting ? S.code : null,
       gc: hosting ? S.hs.pl.length : null, gp: hosting ? S.hs.ph : null,
-      gm: hosting ? CFG().MAX_PLAYERS : null
+      gm: hosting ? CFG().MAX_PLAYERS : null,
+      dg: { md: S.mode || '', cd: S.code || '', ho: S.amHost ? 1 : 0, lp: D.lp, gl: D.gl, pe: D.pe, hs: D.hs,
+        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb }
     };
     var key = JSON.stringify(p);
     if (key === S.lobbyKey) return;
@@ -3111,6 +3122,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       });
     }
     list.sort(function (a, b) { return a.code < b.code ? -1 : 1; });
+    var others = 0;
+    for (i = 0; i < ps.length; i++) if (ps[i] && !ps[i].sameTab && ps[i].kind !== 'agent') others++;
+    D.lp = others; D.gl = list.length;
+    updateLobbyPresence();
     var key = JSON.stringify(list);
     if (key === S.gamesKey) return;
     S.gamesKey = key;
@@ -3211,8 +3226,18 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         var done = false, unsub = null;
         function check() {
           if (done) return;
-          var f = findHs(room.peers());
+          var ps = room.peers(), rp = 0, rv = 0, rh = 0, rb = 0;
+          for (var i = 0; i < ps.length; i++) {
+            var p = ps[i], pr = p && p.presence;
+            if (!p || p.sameTab || p.kind === 'agent') continue;
+            rp++;
+            if (pr && pr.v === 1) rv++;
+            if (pr && pr.hs) { rh++; if (!IS.host.sanitize(pr.hs)) rb++; }
+          }
+          D.rp = rp; D.rv = rv; D.rh = rh; D.rb = rb;
+          var f = findHs(ps);
           if (!f) return;
+          diagSet('jn', 'ok');
           done = true;
           if (unsub) unsub();
           clearTimeout(t);
@@ -3223,6 +3248,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
           done = true;
           if (unsub) unsub();
           room.leave();
+          diagSet('jn', 'nf:' + code);
           reject(new Error('not_found'));
         }, JOIN_WAIT);
         unsub = room.onPeers(check);
@@ -3597,6 +3623,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },
+    diag: function () { var o = {}; for (var k in D) o[k] = D[k]; o.md = S.mode || ''; return o; },
     on: function (evt, fn) {
       if (!listeners[evt] || typeof fn !== 'function') return function () {};
       listeners[evt].push(fn);
@@ -11067,6 +11094,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   function play(k, o) { if (IS.audio && IS.audio.play) IS.audio.play(k, o); }
   function st() { return IS.client && IS.client.state ? IS.client.state() : null; }
   function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+  function diagText() {
+    var d = IS.client.diag ? IS.client.diag() : null;
+    if (!d) return '';
+    return ' (seen in that room: ' + d.rp + ' other tab' + (d.rp === 1 ? '' : 's') + ', ' + d.rh + ' with a game' +
+      (d.rb ? ', ' + d.rb + ' unreadable' : '') + '; ' + d.lp + ' in the lobby, ' + d.gl + ' open game' + (d.gl === 1 ? '' : 's') + ')';
+  }
   function speaking(peer) { return !!(peer && IS.voice && IS.voice.isSpeaking && IS.voice.isSpeaking(peer)); }
   function colorName(i) { return (C.COLORS[i] || C.COLORS[0])[0]; }
   function playerBySlot(s, slot) {
@@ -11353,7 +11386,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
           var mode = IS.net && IS.net.mode;
           if (m === 'not_found') {
             toast(mode === 'room' || mode === 'livekit'
-              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.'
+              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.' + diagText()
               : 'No game ' + o.code + ' in this browser. You\u2019re in Local mode (not connected online), so you can only join games hosted in other tabs of this browser.');
           } else toast(m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
         });

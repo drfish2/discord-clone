@@ -68,12 +68,21 @@
 
   function myPeer() { return IS.net && IS.net.myPeer; }
 
+  // Connection diagnostics, published as the lobby presence field `dg` (counts and codes only)
+  // so a failing join can be diagnosed from the outside. See diag() below.
+  var D = { lp: 0, gl: 0, pe: '', hs: '', jn: '', rp: 0, rv: 0, rh: 0, rb: 0 };
+  function diagSet(k, v) { if (D[k] !== v) { D[k] = v; if (S.lobby) updateLobbyPresence(); } }
+
   function safePresence(room, patch, retry) {
     if (!room) return;
+    var tag = room === S.lobby ? 'L' : 'G';
     try {
       var p = room.presence(patch);
+      if (p && typeof p.then === 'function' && patch.hs) p.then(function () { diagSet('hs', 'ok'); }, function () {});
       if (p && typeof p.catch === 'function') {
         p.catch(function (e) {
+          diagSet('pe', tag + ':' + String((e && e.code) || (e && e.message) || 'err').slice(0, 24));
+          if (patch.hs) diagSet('hs', 'rej');
           if (retry || !e || e.code !== 'invalid_argument' || room !== S.room) return;
           // Too big: shed chat history, then actions, and try again.
           S.chs = S.chs.slice(-1); S.acts = S.acts.slice(-4);
@@ -84,7 +93,7 @@
           safePresence(room, q, true);
         });
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) { diagSet('pe', tag + ':throw'); }
   }
 
   function setPres(patch) {
@@ -122,7 +131,9 @@
     var p = {
       v: 1, n: S.name || '', g: hosting ? S.code : null,
       gc: hosting ? S.hs.pl.length : null, gp: hosting ? S.hs.ph : null,
-      gm: hosting ? CFG().MAX_PLAYERS : null
+      gm: hosting ? CFG().MAX_PLAYERS : null,
+      dg: { md: S.mode || '', cd: S.code || '', ho: S.amHost ? 1 : 0, lp: D.lp, gl: D.gl, pe: D.pe, hs: D.hs,
+        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb }
     };
     var key = JSON.stringify(p);
     if (key === S.lobbyKey) return;
@@ -148,6 +159,10 @@
       });
     }
     list.sort(function (a, b) { return a.code < b.code ? -1 : 1; });
+    var others = 0;
+    for (i = 0; i < ps.length; i++) if (ps[i] && !ps[i].sameTab && ps[i].kind !== 'agent') others++;
+    D.lp = others; D.gl = list.length;
+    updateLobbyPresence();
     var key = JSON.stringify(list);
     if (key === S.gamesKey) return;
     S.gamesKey = key;
@@ -248,8 +263,18 @@
         var done = false, unsub = null;
         function check() {
           if (done) return;
-          var f = findHs(room.peers());
+          var ps = room.peers(), rp = 0, rv = 0, rh = 0, rb = 0;
+          for (var i = 0; i < ps.length; i++) {
+            var p = ps[i], pr = p && p.presence;
+            if (!p || p.sameTab || p.kind === 'agent') continue;
+            rp++;
+            if (pr && pr.v === 1) rv++;
+            if (pr && pr.hs) { rh++; if (!IS.host.sanitize(pr.hs)) rb++; }
+          }
+          D.rp = rp; D.rv = rv; D.rh = rh; D.rb = rb;
+          var f = findHs(ps);
           if (!f) return;
+          diagSet('jn', 'ok');
           done = true;
           if (unsub) unsub();
           clearTimeout(t);
@@ -260,6 +285,7 @@
           done = true;
           if (unsub) unsub();
           room.leave();
+          diagSet('jn', 'nf:' + code);
           reject(new Error('not_found'));
         }, JOIN_WAIT);
         unsub = room.onPeers(check);
@@ -634,6 +660,7 @@
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },
+    diag: function () { var o = {}; for (var k in D) o[k] = D[k]; o.md = S.mode || ''; return o; },
     on: function (evt, fn) {
       if (!listeners[evt] || typeof fn !== 'function') return function () {};
       listeners[evt].push(fn);
