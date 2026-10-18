@@ -320,14 +320,19 @@
 
   function tryRoom() {
     return new Promise(function (resolve) {
+      // net.roomWhy records why there is no claude room: 'no_claude' (not inside claude.ai),
+      // 'null' (claude.ai declined: signed out, public link, no access, standalone page),
+      // 'timeout', 'error' or 'bad'.
       var c = window.claude;
-      if (!c || typeof c.use !== 'function') { resolve(null); return; }
-      var t = setTimeout(function () { resolve(null); }, USE_TIMEOUT);
+      if (!c || typeof c.use !== 'function') { net.roomWhy = 'no_claude'; resolve(null); return; }
+      var t = setTimeout(function () { net.roomWhy = 'timeout'; resolve(null); }, USE_TIMEOUT);
       var ok = function (r) {
         clearTimeout(t);
-        resolve(r && typeof r.presence === 'function' && typeof r.peers === 'function' && typeof r.onPeers === 'function' ? r : null);
+        var good = r && typeof r.presence === 'function' && typeof r.peers === 'function' && typeof r.onPeers === 'function';
+        net.roomWhy = good ? '' : r ? 'bad' : 'null';
+        resolve(good ? r : null);
       };
-      var bad = function () { clearTimeout(t); resolve(null); };
+      var bad = function () { clearTimeout(t); net.roomWhy = 'error'; resolve(null); };
       try { Promise.resolve(c.use('room')).then(ok, bad); } catch (e) { bad(); }
     });
   }

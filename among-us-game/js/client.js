@@ -133,7 +133,7 @@
       gc: hosting ? S.hs.pl.length : null, gp: hosting ? S.hs.ph : null,
       gm: hosting ? CFG().MAX_PLAYERS : null,
       dg: { md: S.mode || '', cd: S.code || '', ho: S.amHost ? 1 : 0, lp: D.lp, gl: D.gl, pe: D.pe, hs: D.hs,
-        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb, cn: D.cn, ce: D.ce, pr: D.pr }
+        jn: D.jn, rp: D.rp, rv: D.rv, rh: D.rh, rb: D.rb, cn: D.cn, ce: D.ce, pr: D.pr, wy: IS.net.roomWhy || '' }
     };
     var key = JSON.stringify(p);
     if (key === S.lobbyKey) return;
@@ -177,7 +177,7 @@
   // The room capability may need the viewer's consent; read it without prompting.
   var perms = null, connFns = [];
   function emitConn() { for (var i = 0; i < connFns.length; i++) { try { connFns[i](conn()); } catch (e) { /* ignore */ } } }
-  function conn() { return { mode: S.mode, connected: D.cn, error: D.ce, permission: D.pr, others: D.lp }; }
+  function conn() { return { mode: S.mode, connected: D.cn, error: D.ce, permission: D.pr, others: D.lp, why: IS.net.roomWhy || '' }; }
   function checkPermission() {
     var c = window.claude;
     if (!c || typeof c.use !== 'function') return Promise.resolve('');

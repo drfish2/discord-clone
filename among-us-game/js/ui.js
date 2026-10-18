@@ -1737,6 +1737,13 @@
   // Online-room problems (room mode): missing permission, a refused connection, or no link yet.
   function setConn(c) {
     S.conn = c || null;
+    if (E.status && c && c.mode !== 'room' && c.why && c.why !== 'no_claude') {
+      // inside claude.ai, but it gave this view no online room
+      E.connBtn.hidden = true;
+      E.status.className = 'status st-local';
+      txt(E.statusTxt, 'Online play isn\u2019t available in this view. Sign in to claude.ai and open the game there; friends need it shared with them. Until then only tabs of this browser can play together.');
+      return;
+    }
     if (!E.status || !c || c.mode !== 'room') { if (E.connBtn) E.connBtn.hidden = true; return; }
     var text = null, btn = null;
     if (c.permission === 'prompt') { text = 'Online play needs your permission'; btn = 'Allow online play'; }
