@@ -5022,8 +5022,17 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     c.quadraticCurveTo(1, -9, -15, -13);
     c.closePath();
   }
+  // Leg: square top (tucked under the body), fully rounded foot, outer edge tapering slightly.
   function legPath(c, x, lift) {
-    rr(c, x, -20 - lift, 13, 20, 6);
+    var w = 13, top = -22 - lift, bot = -lift, r = 6.5;
+    c.beginPath();
+    c.moveTo(x, top);
+    c.lineTo(x + w, top);
+    c.bezierCurveTo(x + w + 0.6, bot - 12, x + w, bot - r - 1, x + w, bot - r);
+    c.arc(x + w - r, bot - r, r, 0, Math.PI / 2);
+    c.lineTo(x + r, bot);
+    c.arc(x + r, bot - r, r, Math.PI / 2, Math.PI);
+    c.closePath();
   }
   function packPath(c, dead) { if (dead) rr(c, -24, -29, 13, 12, 4); else rr(c, -24, -47, 13, 27, 5); }
   function visorPath(c) { rr(c, -1, -48, 23, 15, 7.5); }
@@ -5071,7 +5080,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!ghost) {
       c.save(); c.translate(db, 0); legPath(c, -14, lb); c.fillStyle = dark; c.fill(); c.restore();
       c.save(); c.translate(dfr, 0); legPath(c, 3, lf); c.fillStyle = main; c.fill();
-      c.fillStyle = dark; c.fillRect(3, -4 - lf, 13, 4); c.restore();
+      // shaded sole, clipped to the rounded leg so the foot stays round
+      c.clip();
+      ell(c, 9.5, 1.5 - lf, 10, 5.5); c.fillStyle = dark; c.fill();
+      c.restore();
     }
     // body with shadow side
     if (ghost) ghostPath(c, t); else if (dead) deadPath(c); else bodyPath(c);
@@ -10805,6 +10817,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     "font-family:'Russo One',system-ui,sans-serif}",
     'body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 68px);bottom:calc(env(safe-area-inset-bottom,0px) + 172px)}',
     '@media (max-height:520px){body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 172px);bottom:calc(env(safe-area-inset-bottom,0px) + 20px)}}',
+    // portrait phones in a meeting: the tablet fills the screen, so sit on the right edge above
+    // its footer and the chat form, mic button only
+    '@media (orientation:portrait){body.is-touch .vc-dock.vc-meet{left:auto;right:calc(env(safe-area-inset-right,0px) + 24px);bottom:calc(env(safe-area-inset-bottom,0px) + 150px)}',
+    'body.is-touch .vc-dock.vc-meet .vc-mode{display:none}}',
     '.vc-dock[hidden]{display:none}',
     '.vc-mic{position:relative;width:52px;height:52px;border-radius:50%;border:3px solid #050814;cursor:pointer;display:grid;place-items:center;padding:0;',
     'background:radial-gradient(circle at 50% 30%,#3a4468,#151c33 75%);color:#9aa3c7;box-shadow:0 4px 0 #050814,inset 0 -4px 0 rgba(0,0,0,.35);',
@@ -10954,6 +10970,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     }
     if (!S.room) return;
     mix(view);
+    if (S.dock) S.dock.classList.toggle('vc-meet', view.phase === 'meeting' || view.phase === 'eject');
     renderDock();
   }
 

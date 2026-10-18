@@ -342,6 +342,10 @@
     "font-family:'Russo One',system-ui,sans-serif}",
     'body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 68px);bottom:calc(env(safe-area-inset-bottom,0px) + 172px)}',
     '@media (max-height:520px){body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 172px);bottom:calc(env(safe-area-inset-bottom,0px) + 20px)}}',
+    // portrait phones in a meeting: the tablet fills the screen, so sit on the right edge above
+    // its footer and the chat form, mic button only
+    '@media (orientation:portrait){body.is-touch .vc-dock.vc-meet{left:auto;right:calc(env(safe-area-inset-right,0px) + 24px);bottom:calc(env(safe-area-inset-bottom,0px) + 150px)}',
+    'body.is-touch .vc-dock.vc-meet .vc-mode{display:none}}',
     '.vc-dock[hidden]{display:none}',
     '.vc-mic{position:relative;width:52px;height:52px;border-radius:50%;border:3px solid #050814;cursor:pointer;display:grid;place-items:center;padding:0;',
     'background:radial-gradient(circle at 50% 30%,#3a4468,#151c33 75%);color:#9aa3c7;box-shadow:0 4px 0 #050814,inset 0 -4px 0 rgba(0,0,0,.35);',
@@ -491,6 +495,7 @@
     }
     if (!S.room) return;
     mix(view);
+    if (S.dock) S.dock.classList.toggle('vc-meet', view.phase === 'meeting' || view.phase === 'eject');
     renderDock();
   }
 
