@@ -1642,7 +1642,7 @@
     S.eject = { t: 0, color: (d.color != null && d.color >= 0 && d.name) ? d.color : -1, hat: cleanHat(d.hat), main: lines[0], sub: lines.slice(1).join('\n'), shown: -1, rot: Math.random() * 6 };
     E.ejectTxt.textContent = '';
     E.eject.classList.add('on');
-    later('eject', 6000, hideEjection);
+    later('eject', 6400, hideEjection);
   }
   function hideEjection() { clearTimer('eject'); S.eject = null; if (E.eject) E.eject.classList.remove('on'); }
   function drawEject(dt) {
@@ -1661,9 +1661,9 @@
       drawCrew(ctx, 0, 28 * sc, ej.color, { scale: sc, facing: 1, noShadow: true, hat: ej.hat });
       ctx.restore();
     }
-    // typewriter
-    var start = 0.5, cps = 30;
+    // typewriter, paced so the text finishes with the typing sound (eject_type, ~4.5 s)
     var all = ej.main + (ej.sub ? '\n' + ej.sub : '');
+    var start = 0.1, cps = Math.max(8, all.length / 4.4);
     var n = clamp(Math.floor((ej.t - start) * cps), 0, all.length);
     if (n !== ej.shown) {
       ej.shown = n;

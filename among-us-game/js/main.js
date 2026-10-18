@@ -424,7 +424,8 @@
         var s2 = st();
         IS.ui.hideMeeting();
         IS.ui.showEjection(ejectionView(s2 || s));
-        play('eject');
+        play('eject', { volume: 0.5 });
+        play('eject_type'); // the ejection text types out in step with this sound
       }, 2600);
     } else if (to === 'over') {
       IS.ui.hideMeeting && IS.ui.hideMeeting();

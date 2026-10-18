@@ -23,7 +23,7 @@
 
     SAB_TIME: 40, // seconds until a critical sabotage (reactor / o2) kills the crew
     SAB_COOLDOWN: 30,
-    EJECT_TIME: 7, // seconds
+    EJECT_TIME: 9, // seconds: ~2.6 s vote reveal, then the ejection while the text types out
     ROLE_TIME: 4.5,
 
     DEFAULT_SETTINGS: { map: 0, imp: 1, kcd: 25, spd: 1, cvis: 1, ivis: 1.5, dis: 15, vot: 45, emg: 1, nt: 5, conf: 1, kd: 1, free: 0 },

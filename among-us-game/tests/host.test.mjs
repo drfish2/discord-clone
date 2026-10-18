@@ -16,6 +16,7 @@ for (const f of ['js/config.js', 'js/host.js']) {
 const IS = ctx.IS;
 const H = IS.host;
 const C = IS.CONFIG;
+const EJECT_MS = C.EJECT_TIME * 1000;
 // Objects from the vm realm: compare structurally via JSON.
 const J = (o) => JSON.parse(JSON.stringify(o));
 
@@ -208,7 +209,7 @@ test('report -> meeting -> votes -> eject -> crew win by vote', () => {
   assert.equal(g.hs.ph, 'eject');
   assert.deepEqual(J(g.hs.ej), { s: is, imp: 1, tie: 0, left: 0 });
   assert.equal(g.hs.pl[is][2], 0);
-  tick(g, 6999);
+  tick(g, EJECT_MS - 1);
   assert.equal(g.hs.ph, 'eject');
   tick(g, 1);
   assert.equal(g.hs.ph, 'over');
@@ -228,7 +229,7 @@ test('meeting: tie and skip-majority eject nobody; timeout tallies; kill cooldow
   tick(g);
   assert.equal(g.hs.ph, 'eject');
   assert.equal(g.hs.ej.s, -1); assert.equal(g.hs.ej.tie, 1);
-  tick(g, 7000);
+  tick(g, EJECT_MS);
   assert.equal(g.hs.ph, 'play');
   assert.equal(g.hs.kc[is], g.t + 30_000);
   assert.equal(g.hs.mt, null); assert.equal(g.hs.ej, null);
@@ -242,14 +243,14 @@ test('meeting: tie and skip-majority eject nobody; timeout tallies; kill cooldow
   tick(g, 20_000); // timeout
   assert.equal(g.hs.ph, 'eject');
   assert.equal(g.hs.ej.s, -1); assert.equal(g.hs.ej.tie, 0);
-  tick(g, 7000);
+  tick(g, EJECT_MS);
   // ejecting a crewmate
   act(g, peerAt(g, cs[2]), 'emg'); tick(g);
   for (const s of [cs[0], cs[1], cs[2], is]) act(g, peerAt(g, s), 'vote', cs[4]);
   act(g, peerAt(g, cs[3]), 'vote', -1); act(g, peerAt(g, cs[4]), 'vote', is);
   tick(g);
   assert.deepEqual(J(g.hs.ej), { s: cs[4], imp: 0, tie: 0, left: 1 });
-  tick(g, 7000);
+  tick(g, EJECT_MS);
   assert.equal(g.hs.ph, 'play');
 });
 
@@ -260,7 +261,7 @@ test('emergency: per-player limit, dead cannot, blocked by critical sabotage', (
   const A = peerAt(g, cs[0]);
   act(g, A, 'emg'); tick(g);
   assert.equal(g.hs.ph, 'meeting'); assert.equal(g.hs.em[cs[0]], 1);
-  tick(g, 15_000); tick(g, 7000);
+  tick(g, 15_000); tick(g, EJECT_MS);
   assert.equal(g.hs.ph, 'play');
   act(g, A, 'emg'); tick(g);
   assert.equal(g.hs.ph, 'play', 'limit reached');
@@ -338,7 +339,7 @@ test('sabotage: o2 two parts, lights, comms, reactor via presence, cooldown, tim
   // lights persist through a meeting
   act(g, peerAt(g, cs[0]), 'emg'); tick(g);
   assert.equal(g.hs.sb.k, 'lights');
-  tick(g, 200_000); tick(g, 7000);
+  tick(g, 200_000); tick(g, EJECT_MS);
   assert.equal(g.hs.ph, 'play');
   act(g, peerAt(g, cs[2]), 'fix', 'lights', 0); tick(g);
   assert.equal(g.hs.sb, null);
@@ -438,7 +439,7 @@ test('host migration: adopted hs (over the wire) never replays processed actions
   const A = peerAt(g, cs[0]);
   act(g, A, 'emg'); tick(g);
   assert.equal(g.hs.em[cs[0]], 1);
-  tick(g, 15_000); tick(g, 7000);
+  tick(g, 15_000); tick(g, EJECT_MS);
   assert.equal(g.hs.ph, 'play');
   // host p0 leaves; p1 becomes host with the last hs it saw (JSON round trip) and fresh timers
   const wire = JSON.parse(JSON.stringify(g.hs));
