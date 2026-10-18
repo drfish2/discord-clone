@@ -1743,6 +1743,12 @@
     else if (c.permission === 'denied') { text = 'Online play is turned off for this page'; btn = 'Open permissions'; }
     else if (c.error) text = 'Couldn\u2019t connect to online play (' + c.error + ')';
     else if (c.connected === 'n') text = 'Connecting to online play\u2026';
+    else if (c.connected === 'y') {
+      text = 'Online \u2014 ' + (c.others ? c.others + ' other player' + (c.others === 1 ? '' : 's') + ' connected'
+        : 'connected, no one else here yet');
+      E.status.className = 'status st-room'; E.connBtn.hidden = true; txt(E.statusTxt, text);
+      return;
+    }
     E.connBtn.hidden = !btn;
     if (btn) txt(E.connBtn, btn);
     if (text) { E.status.className = 'status st-wait'; txt(E.statusTxt, text); }

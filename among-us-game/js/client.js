@@ -161,8 +161,10 @@
     list.sort(function (a, b) { return a.code < b.code ? -1 : 1; });
     var others = 0;
     for (i = 0; i < ps.length; i++) if (ps[i] && !ps[i].sameTab && ps[i].kind !== 'agent') others++;
+    var lpChanged = D.lp !== others;
     D.lp = others; D.gl = list.length;
     updateLobbyPresence();
+    if (lpChanged) emitConn();
     var key = JSON.stringify(list);
     if (key === S.gamesKey) return;
     S.gamesKey = key;
