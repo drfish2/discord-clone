@@ -158,7 +158,7 @@ test('room mode: claude.use resolving null / throwing / hanging falls back to lo
   const Hh = tab({ claude: { use: () => new Promise(() => {}) } });
   assert.equal((await Hh.IS.net.init()).mode, 'local');
   const dt = Date.now() - t0;
-  assert.ok(dt >= 3900 && dt < 5000, 'timeout ~4s, took ' + dt);
+  assert.ok(dt >= 10900 && dt < 12500, 'timeout ~11s (claude.use answers within 10 s), took ' + dt);
   await Hh.IS.net.lobby.leave();
   const Off = tab({ BroadcastChannel: undefined });
   assert.equal((await Off.IS.net.init()).mode, 'offline');

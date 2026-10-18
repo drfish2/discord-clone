@@ -11,7 +11,7 @@
   var NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,47}$/;
   var KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
   var LIMIT = 4096;
-  var HEARTBEAT = 1000, TIMEOUT = 4000, THROTTLE = 50, USE_TIMEOUT = 4000;
+  var HEARTBEAT = 1000, TIMEOUT = 4000, THROTTLE = 50, USE_TIMEOUT = 11000; // claude.use() answers within 10 s
   var CHANNEL_PREFIX = 'starship-sus/';
   var EMPTY = Object.freeze([]);
 

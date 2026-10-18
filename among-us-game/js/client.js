@@ -11,7 +11,7 @@
   'use strict';
   var IS = (window.IS = window.IS || {});
 
-  var HOST_TICK = 125, HEARTBEAT = 1000, SELF_MIN = 50, JOIN_WAIT = 6000, READY_WAIT = 8000;
+  var HOST_TICK = 125, HEARTBEAT = 1000, SELF_MIN = 50, JOIN_WAIT = 10000, READY_WAIT = 14000;
   var CODE_RE = /^[A-HJ-NP-Z]{4}$/;
   var BAD_CHARS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\ufeff\\ufff0-\\uffff\\ue000-\\uf8ff]', 'g');
 

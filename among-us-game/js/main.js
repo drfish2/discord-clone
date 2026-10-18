@@ -330,7 +330,12 @@
       IS.client.join({ code: o.code, name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) {
           var m = e && e.message || String(e);
-          toast(m === 'not_found' ? 'No game with that code.' : m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
+          var mode = IS.net && IS.net.mode;
+          if (m === 'not_found') {
+            toast(mode === 'room' || mode === 'livekit'
+              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.'
+              : 'No game ' + o.code + ' in this browser. You\u2019re in Local mode (not connected online), so you can only join games hosted in other tabs of this browser.');
+          } else toast(m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
         });
     },
     onFreeplay: function (o) {

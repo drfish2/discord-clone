@@ -1726,8 +1726,9 @@
 
   // ------------------------------------------------------------------ mode
   var MODE_TEXT = {
-    room: 'Online — anyone with this page can join',
-    local: 'Local mode — open more tabs to play together',
+    room: 'Online — people you\u2019ve shared this page with can join',
+    livekit: 'Online — anyone with this link can join',
+    local: 'Local mode (not connected online) — only other tabs of this browser can join',
     offline: 'Offline — Freeplay only'
   };
   function setMode(m) {

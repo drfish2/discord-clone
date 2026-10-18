@@ -2031,7 +2031,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   var NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,47}$/;
   var KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
   var LIMIT = 4096;
-  var HEARTBEAT = 1000, TIMEOUT = 4000, THROTTLE = 50, USE_TIMEOUT = 4000;
+  var HEARTBEAT = 1000, TIMEOUT = 4000, THROTTLE = 50, USE_TIMEOUT = 11000; // claude.use() answers within 10 s
   var CHANNEL_PREFIX = 'starship-sus/';
   var EMPTY = Object.freeze([]);
 
@@ -2969,7 +2969,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   'use strict';
   var IS = (window.IS = window.IS || {});
 
-  var HOST_TICK = 125, HEARTBEAT = 1000, SELF_MIN = 50, JOIN_WAIT = 6000, READY_WAIT = 8000;
+  var HOST_TICK = 125, HEARTBEAT = 1000, SELF_MIN = 50, JOIN_WAIT = 10000, READY_WAIT = 14000;
   var CODE_RE = /^[A-HJ-NP-Z]{4}$/;
   var BAD_CHARS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\ufeff\\ufff0-\\uffff\\ue000-\\uf8ff]', 'g');
 
@@ -10305,8 +10305,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
   // ------------------------------------------------------------------ mode
   var MODE_TEXT = {
-    room: 'Online — anyone with this page can join',
-    local: 'Local mode — open more tabs to play together',
+    room: 'Online — people you\u2019ve shared this page with can join',
+    livekit: 'Online — anyone with this link can join',
+    local: 'Local mode (not connected online) — only other tabs of this browser can join',
     offline: 'Offline — Freeplay only'
   };
   function setMode(m) {
@@ -11344,7 +11345,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       IS.client.join({ code: o.code, name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) {
           var m = e && e.message || String(e);
-          toast(m === 'not_found' ? 'No game with that code.' : m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
+          var mode = IS.net && IS.net.mode;
+          if (m === 'not_found') {
+            toast(mode === 'room' || mode === 'livekit'
+              ? 'No game ' + o.code + ' found. Check the code, and keep the host\u2019s tab open.'
+              : 'No game ' + o.code + ' in this browser. You\u2019re in Local mode (not connected online), so you can only join games hosted in other tabs of this browser.');
+          } else toast(m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
         });
     },
     onFreeplay: function (o) {
