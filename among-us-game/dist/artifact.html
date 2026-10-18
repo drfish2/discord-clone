@@ -1065,16 +1065,952 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
 </script>
 <script>/* js/hats.js */
-/* placeholder: being written */
+/* Starship Sus — cosmetic hats. See SPEC.md §6.
+   IS.HATS = [{id, name}] (index 0 = no hat; indices are stored in presence `ht`, so never reorder).
+   IS.hats.draw(ctx, idx, opts) paints hat idx in crewmate-local coordinates (the space
+   IS.render.drawCrewmate uses: feet at 0,0, facing right, head dome top at about y = -54.5 with
+   its outline reaching y = -58). opts {facing, ghost, dead, time, walk, color, dark}.
+   Pure canvas, no DOM access: loads fine in node. */
+(function (root) {
+  'use strict';
+  var IS = (root.IS = root.IS || {});
+
+  var OL = '#10131f';
+  var TAU = Math.PI * 2;
+  var LW = 5.5;               // outline underlay width (≈2.75px visible, like the crewmate)
+  // hat origin = top of the head dome (crew coords)
+  var OX = 1, OY = -54;
+
+  // ------------------------------------------------------------------------------------ kit
+  function ell(c, x, y, rx, ry, rot) { c.beginPath(); c.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), rot || 0, 0, TAU); }
+  function rr(c, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  // outline + flat fill of the path that fn builds
+  function part(c, fn, fill, lw) {
+    fn(c);
+    c.strokeStyle = OL; c.lineWidth = lw || LW; c.stroke();
+    if (fill) { c.fillStyle = fill; c.fill(); }
+  }
+  // outline + two-tone fill (shadow on the back/bottom side, like the crewmate body)
+  function shaded(c, fn, main, dark, dx, dy, lw) {
+    fn(c);
+    c.strokeStyle = OL; c.lineWidth = lw || LW; c.stroke();
+    c.fillStyle = dark; c.fill();
+    c.save(); c.clip();
+    c.translate(dx == null ? 3 : dx, dy == null ? -2.5 : dy);
+    fn(c); c.fillStyle = main; c.fill();
+    c.restore();
+  }
+  function shine(c, x, y, rx, ry, rot, a) { ell(c, x, y, rx, ry, rot); c.fillStyle = 'rgba(255,255,255,' + (a == null ? 0.38 : a) + ')'; c.fill(); }
+  function line(c, pts, color, lw) {
+    c.beginPath(); c.moveTo(pts[0], pts[1]);
+    for (var i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]);
+    c.strokeStyle = color || OL; c.lineWidth = lw || 2; c.stroke();
+  }
+  // a cap that hugs the dome: bottom edge at local y=b, from x=-l to x=r, top at about -top
+  function capPath(l, r, b, top) {
+    var hc = (b * 0.25 + top) / 0.75;   // control-point height giving the requested top
+    return function (c) {
+      c.beginPath();
+      c.moveTo(-l, b);
+      c.bezierCurveTo(-l, -hc, r, -hc, r, b);
+      c.quadraticCurveTo(0, b + 2.5, -l, b);
+      c.closePath();
+    };
+  }
+  function star(c, x, y, r1, r2, n, rot) {
+    c.beginPath();
+    for (var i = 0; i < n * 2; i++) {
+      var a = (rot || -Math.PI / 2) + i * Math.PI / n, r = i % 2 ? r2 : r1;
+      c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    }
+    c.closePath();
+  }
+
+  // ------------------------------------------------------------------------------------ hats
+  // Each entry: id, name, top (crew-space y of the highest painted pixel, used for framing and
+  // name tags), tilt (radians, negative leans back), anim (needs per-frame redraw), draw(c, o).
+  var DEFS = [
+    { id: 'none', name: 'No hat', top: -58, draw: null },
+
+    { id: 'tophat', name: 'Top Hat', top: -90, tilt: -0.1, draw: function (c) {
+      shaded(c, function (c) {
+        c.beginPath();
+        c.moveTo(-11, 0); c.lineTo(-12.5, -27); c.quadraticCurveTo(0, -30, 12.5, -27); c.lineTo(11, 0); c.closePath();
+      }, '#3a3f52', '#1f2230', 3, -1);
+      ell(c, 0, -27.5, 12.5, 2.8); c.fillStyle = '#4b5168'; c.fill(); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      // band
+      c.save();
+      c.beginPath(); c.moveTo(-11.3, -4); c.lineTo(-11.8, -11); c.quadraticCurveTo(0, -13, 11.8, -11); c.lineTo(11.3, -4); c.quadraticCurveTo(0, -2, -11.3, -4); c.closePath();
+      c.fillStyle = '#d42a3c'; c.fill(); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      c.restore();
+      // brim
+      shaded(c, function (c) { rr(c, -18, -2.5, 37, 6, 3); }, '#3a3f52', '#1f2230', 2, -1.5);
+      shine(c, 6, -20, 2, 5, 0.05, 0.22);
+    } },
+
+    { id: 'party', name: 'Party Hat', top: -91, tilt: -0.18, draw: function (c) {
+      var cone = function (c) { c.beginPath(); c.moveTo(-11.5, 2); c.lineTo(-1, -30); c.lineTo(12, 2); c.quadraticCurveTo(0, 5, -11.5, 2); c.closePath(); };
+      shaded(c, cone, '#ff5fb4', '#c42d86', 3, -1);
+      c.save(); cone(c); c.clip();
+      c.fillStyle = '#ffe14d';
+      for (var i = 0; i < 3; i++) {
+        var y = -4 - i * 9;
+        c.beginPath(); c.moveTo(-14, y + 3); c.lineTo(14, y - 3); c.lineTo(14, y - 7.5); c.lineTo(-14, y - 1.5); c.closePath(); c.fill();
+      }
+      c.fillStyle = '#4fe3ff';
+      [[-5, -6], [5, -15], [-1, -21], [6, -2]].forEach(function (p) { ell(c, p[0], p[1], 1.6, 1.6); c.fill(); });
+      c.restore();
+      cone(c); c.strokeStyle = OL; c.lineWidth = 2.2; c.stroke();
+      // pom-pom
+      part(c, function (c) { ell(c, -1, -31, 4.6, 4.6); }, '#ffffff');
+      shine(c, -2.5, -32.5, 1.6, 1.2, 0, 0.9);
+      ell(c, 0.6, -29.6, 2.3, 1.8); c.fillStyle = 'rgba(160,170,200,0.55)'; c.fill();
+    } },
+
+    { id: 'crown', name: 'Crown', top: -76, tilt: -0.08, draw: function (c) {
+      var crown = function (c) {
+        c.beginPath();
+        c.moveTo(-12, 1.5);
+        c.lineTo(-13, -14); c.lineTo(-7, -7.5); c.lineTo(-1, -17); c.lineTo(5, -7.5); c.lineTo(12, -14);
+        c.lineTo(11.5, 1.5); c.quadraticCurveTo(0, 4, -12, 1.5); c.closePath();
+      };
+      shaded(c, crown, '#ffd23f', '#c98c08', 3, -1.5);
+      // rim band
+      c.beginPath(); c.moveTo(-12.2, -2.5); c.quadraticCurveTo(0, 0, 11.7, -2.5); c.strokeStyle = 'rgba(120,70,0,0.45)'; c.lineWidth = 1.6; c.stroke();
+      part(c, function (c) { ell(c, -13, -14.5, 2.4, 2.4); }, '#ffe680', 3);
+      part(c, function (c) { ell(c, -1, -17.5, 2.6, 2.6); }, '#ffe680', 3);
+      part(c, function (c) { ell(c, 12, -14.5, 2.4, 2.4); }, '#ffe680', 3);
+      part(c, function (c) { c.beginPath(); c.moveTo(-1, -9.5); c.lineTo(2.8, -5.5); c.lineTo(-1, -1.5); c.lineTo(-4.8, -5.5); c.closePath(); }, '#ff3b5c', 2.4);
+      part(c, function (c) { ell(c, -8, -4, 1.9, 1.9); }, '#3fb0ff', 2);
+      part(c, function (c) { ell(c, 6.5, -4, 1.9, 1.9); }, '#3ee07a', 2);
+      shine(c, -2.2, -6.5, 0.9, 1.3, 0, 0.8);
+      shine(c, 7, -11, 1.2, 3, 0.3, 0.45);
+    } },
+
+    { id: 'chef', name: 'Chef Hat', top: -87, tilt: -0.1, draw: function (c) {
+      var puff = function (c) {
+        c.beginPath();
+        c.moveTo(-10, -6);
+        c.bezierCurveTo(-19, -9, -18, -22, -9, -21);
+        c.bezierCurveTo(-8, -31, 6, -32, 7, -23);
+        c.bezierCurveTo(16, -24, 18, -10, 10, -6);
+        c.closePath();
+      };
+      shaded(c, puff, '#ffffff', '#c9d2e6', 3, -2);
+      c.beginPath(); c.moveTo(-4, -8); c.quadraticCurveTo(-5, -15, -2, -19); c.moveTo(4, -8); c.quadraticCurveTo(5, -14, 3, -19);
+      c.strokeStyle = 'rgba(120,135,170,0.6)'; c.lineWidth = 1.6; c.stroke();
+      shaded(c, function (c) { c.beginPath(); c.moveTo(-11.5, 2.5); c.lineTo(-11, -7.5); c.quadraticCurveTo(0, -9.5, 11, -7.5); c.lineTo(12, 2.5); c.quadraticCurveTo(0, 4.5, -11.5, 2.5); c.closePath(); }, '#f4f7fd', '#c3cce0', 2.5, -1);
+      shine(c, 6, -25, 2.5, 1.6, -0.3, 0.9);
+    } },
+
+    { id: 'cowboy', name: 'Cowboy Hat', top: -78, tilt: -0.06, draw: function (c) {
+      var crown = function (c) {
+        c.beginPath();
+        c.moveTo(-12, 0);
+        c.bezierCurveTo(-13, -10, -12, -17, -8, -18);
+        c.quadraticCurveTo(-3, -18, 0, -15);
+        c.quadraticCurveTo(3, -18, 8, -18);
+        c.bezierCurveTo(12, -17, 13, -10, 12, 0);
+        c.closePath();
+      };
+      shaded(c, crown, '#c27a3a', '#87501f', 3, -1.5);
+      c.beginPath(); c.moveTo(-12, -5); c.quadraticCurveTo(0, -3, 12, -5); c.lineTo(12.3, -1); c.quadraticCurveTo(0, 1, -12.3, -1); c.closePath();
+      c.fillStyle = '#4a2a12'; c.fill(); c.strokeStyle = OL; c.lineWidth = 1.8; c.stroke();
+      var brim = function (c) {
+        c.beginPath();
+        c.moveTo(-26, -7);
+        c.quadraticCurveTo(-22, 2, 0, 2.5);
+        c.quadraticCurveTo(22, 2, 27, -7);
+        c.quadraticCurveTo(25, 6.5, 0, 6.5);
+        c.quadraticCurveTo(-24, 6.5, -26, -7);
+        c.closePath();
+      };
+      shaded(c, brim, '#c27a3a', '#87501f', 0, -2);
+      shine(c, 6, -13, 1.6, 3.4, 0.2, 0.25);
+    } },
+
+    { id: 'beanie', name: 'Beanie', top: -79, tilt: -0.05, draw: function (c) {
+      var cap = capPath(15, 16, 4, 12.5);
+      shaded(c, cap, '#ff4d5e', '#b81d33', 3, -2);
+      c.save(); cap(c); c.clip();
+      c.strokeStyle = 'rgba(110,10,30,0.3)'; c.lineWidth = 1.5;
+      for (var i = -2; i <= 2; i++) { c.beginPath(); c.moveTo(i * 5.8, 4); c.quadraticCurveTo(i * 4.8, -5, i * 2.4, -12); c.stroke(); }
+      c.restore();
+      // folded, ribbed cuff (same yarn, a shade darker)
+      var cuff = function (c) { c.beginPath(); c.moveTo(-15.6, 7); c.lineTo(-15.2, 0.8); c.quadraticCurveTo(0.5, -2.2, 16.2, 0.8); c.lineTo(16.6, 7); c.quadraticCurveTo(0.5, 9.5, -15.6, 7); c.closePath(); };
+      shaded(c, cuff, '#e8364a', '#a3162a', 2, -1, 5);
+      c.strokeStyle = 'rgba(90,0,20,0.35)'; c.lineWidth = 1.3;
+      for (var j = -12; j <= 13; j += 3.5) { var k = 1 - Math.abs(j) / 16; c.beginPath(); c.moveTo(j, 1.5 - k * 2); c.lineTo(j + 0.2, 6.5 + k * 1.6); c.stroke(); }
+      // pom-pom
+      part(c, function (c) { ell(c, -1, -14.5, 5.5, 5); }, '#ffffff');
+      ell(c, 0.5, -13, 3, 2.2); c.fillStyle = 'rgba(160,170,200,0.5)'; c.fill();
+      shine(c, -2.5, -16, 1.8, 1.3, 0, 0.9);
+      shine(c, 8, -6, 2.6, 1.4, 0.5, 0.25);
+    } },
+
+    { id: 'halo', name: 'Halo', top: -77, anim: true, draw: function (c, o) {
+      var t = o.time || 0, y = -11 + Math.sin(t * 2.4) * 1.5;
+      var g = c.createRadialGradient(0, y, 2, 0, y, 18);
+      g.addColorStop(0, 'rgba(255,240,150,0.45)'); g.addColorStop(1, 'rgba(255,240,150,0)');
+      c.fillStyle = g; ell(c, 0, y, 18, 9); c.fill();
+      ell(c, 0, y, 12, 3.6); c.strokeStyle = OL; c.lineWidth = 7.5; c.stroke();
+      ell(c, 0, y, 12, 3.6); c.strokeStyle = '#ffd84a'; c.lineWidth = 3.4; c.stroke();
+      c.beginPath(); c.ellipse(0, y, 12, 3.6, 0, Math.PI * 1.05, Math.PI * 1.6); c.strokeStyle = '#fff6c4'; c.lineWidth = 1.5; c.stroke();
+    } },
+
+    { id: 'horns', name: 'Devil Horns', top: -76, draw: function (c) {
+      // s = 1 curls toward the face, s = -1 toward the back (mirror images)
+      var horn = function (bx, by, s) {
+        return function (c) {
+          c.beginPath();
+          c.moveTo(bx - 5.5 * s, by + 1);
+          c.bezierCurveTo(bx - 8 * s, by - 7, bx - 4 * s, by - 13, bx + 4 * s, by - 18);
+          c.bezierCurveTo(bx + 1 * s, by - 12, bx + 2 * s, by - 6, bx + 5.5 * s, by);
+          c.quadraticCurveTo(bx, by + 2.5, bx - 5.5 * s, by + 1);
+          c.closePath();
+        };
+      };
+      shaded(c, horn(-7.5, 1.5, -1), '#e8273a', '#9e0f22', 2, -1.5);
+      shaded(c, horn(8.5, 1.5, 1), '#ff3346', '#b0122a', 2, -1.5);
+      shine(c, 6.5, -6, 1.1, 3.6, -0.35, 0.45);
+      shine(c, -9.5, -6, 1, 3.2, 0.35, 0.3);
+    } },
+
+    { id: 'flower', name: 'Flower', top: -91, tilt: 0.06, draw: function (c) {
+      c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(-2.5, -10, 1, -19);
+      c.strokeStyle = OL; c.lineWidth = 6; c.stroke();
+      c.strokeStyle = '#3cbf55'; c.lineWidth = 2.6; c.stroke();
+      part(c, function (c) { c.beginPath(); c.moveTo(-0.8, -8); c.quadraticCurveTo(-10, -13, -12, -7); c.quadraticCurveTo(-6, -3, -0.8, -8); c.closePath(); }, '#3cbf55', 4.5);
+      var petals = function (c) {
+        c.beginPath();
+        for (var i = 0; i < 6; i++) {
+          var a = i * TAU / 6 - Math.PI / 2;
+          c.moveTo(1 + Math.cos(a) * 3, -25 + Math.sin(a) * 3);
+          c.ellipse(1 + Math.cos(a) * 6.5, -25 + Math.sin(a) * 6.5, 5, 3.6, a, 0, TAU);
+        }
+      };
+      petals(c); c.strokeStyle = OL; c.lineWidth = LW; c.stroke();
+      petals(c); c.fillStyle = '#ff8fd0'; c.fill();
+      c.save(); c.translate(1, -25); c.rotate(0.5); c.translate(-1, 25);
+      for (var i = 0; i < 6; i++) { var a = i * TAU / 6 - Math.PI / 2; ell(c, 1 + Math.cos(a) * 7.5, -25 + Math.sin(a) * 7.5, 2, 1.4, a); c.fillStyle = 'rgba(255,255,255,0.35)'; c.fill(); }
+      c.restore();
+      part(c, function (c) { ell(c, 1, -25, 4, 4); }, '#ffd23f', 3);
+      shine(c, -0.2, -26.2, 1.3, 1, 0, 0.8);
+    } },
+
+    { id: 'cap', name: 'Baseball Cap', top: -66, tilt: -0.04, draw: function (c) {
+      var bill = function (c) { c.beginPath(); c.moveTo(4, 0.5); c.quadraticCurveTo(18, -2.5, 29, 3); c.quadraticCurveTo(28, 6.5, 22, 6.5); c.quadraticCurveTo(14, 5, 4, 6); c.closePath(); };
+      shaded(c, bill, '#2f6fe0', '#163f97', 0, -2);
+      var cap = capPath(14.5, 15.5, 4.5, 8.5);
+      shaded(c, cap, '#3d82ff', '#1e4fb8', 3, -2);
+      c.beginPath(); c.moveTo(0.5, -8); c.quadraticCurveTo(6, -2, 6.5, 5.5); c.moveTo(0.5, -8); c.quadraticCurveTo(-7, -3, -8, 5.5);
+      c.strokeStyle = 'rgba(10,30,90,0.45)'; c.lineWidth = 1.5; c.stroke();
+      part(c, function (c) { ell(c, 0.5, -8.6, 2.2, 1.4); }, '#3d82ff', 2.6);
+      part(c, function (c) { rr(c, 2.5, -4, 7, 5.5, 1.6); }, '#ffffff', 2.4);
+      c.fillStyle = '#e8273a'; c.fillRect(4.2, -2.8, 3.6, 3.1);
+      shine(c, 8, -5, 2.5, 1.4, 0.4, 0.28);
+    } },
+
+    { id: 'viking', name: 'Viking Helmet', top: -78, draw: function (c) {
+      var horn = function (s) {
+        return function (c) {
+          c.beginPath();
+          c.moveTo(13 * s, -1);
+          c.quadraticCurveTo(24 * s, -2, 23 * s, -19);
+          c.quadraticCurveTo(19 * s, -9, 11 * s, -7.5);
+          c.closePath();
+        };
+      };
+      shaded(c, horn(-1), '#f5ecd2', '#c2b48c', 1, -1.5);
+      shaded(c, horn(1), '#f5ecd2', '#c2b48c', 1, -1.5);
+      c.strokeStyle = 'rgba(120,100,60,0.5)'; c.lineWidth = 1.3;
+      [[-1, 0.45], [1, 0.45], [-1, 0.75], [1, 0.75]].forEach(function (h) {
+        var s = h[0], k = h[1]; c.beginPath(); c.moveTo(s * (13 + 8 * k), -2 - 9 * k); c.lineTo(s * (12 + 6 * k), -6 - 8 * k); c.stroke();
+      });
+      var dome = capPath(15, 16, 4.5, 11);
+      shaded(c, dome, '#b9c3d6', '#77829c', 3, -2);
+      // band + ridge
+      c.beginPath(); c.moveTo(0.5, -10.5); c.lineTo(0.5, 5); c.strokeStyle = OL; c.lineWidth = 5; c.stroke(); c.strokeStyle = '#d9b44a'; c.lineWidth = 2.4; c.stroke();
+      var band = function (c) { c.beginPath(); c.moveTo(-15.5, 6); c.lineTo(-15.3, 0.5); c.quadraticCurveTo(0.5, -2.5, 16.3, 0.5); c.lineTo(16.5, 6); c.quadraticCurveTo(0.5, 9, -15.5, 6); c.closePath(); };
+      shaded(c, band, '#e2bd52', '#a4801f', 2, -1, 4.5);
+      c.fillStyle = '#fff4c8';
+      [-10, -4, 5, 11].forEach(function (x) { ell(c, x, 3.4, 1.1, 1.1); c.fill(); });
+      shine(c, 7, -6, 3.2, 1.7, 0.45, 0.4);
+    } },
+
+    { id: 'wizard', name: 'Wizard Hat', top: -96, tilt: -0.08, draw: function (c) {
+      var cone = function (c) {
+        c.beginPath();
+        c.moveTo(-11, 1);
+        c.bezierCurveTo(-8, -12, -6, -26, -9, -33);
+        c.quadraticCurveTo(-13, -38, -21, -33);
+        c.quadraticCurveTo(-11, -29, 3, -18);
+        c.bezierCurveTo(7, -12, 10, -5, 12, 1);
+        c.closePath();
+      };
+      shaded(c, cone, '#7b4be0', '#4a2496', 3, -1);
+      c.fillStyle = '#ffd84a';
+      star(c, 2.5, -9, 3.6, 1.6, 5); c.fill(); c.strokeStyle = OL; c.lineWidth = 1.3; c.stroke();
+      star(c, -6, -20, 2.4, 1.1, 5, -1.2); c.fill(); c.stroke();
+      ell(c, 6, -2.5, 1, 1); c.fill();
+      ell(c, -4, -4, 0.9, 0.9); c.fill();
+      var brim = function (c) { ell(c, 0.5, 1.5, 20, 4.3); };
+      shaded(c, brim, '#7b4be0', '#4a2496', 0, -1.6);
+      c.beginPath(); c.ellipse(0.5, 1.5, 20, 4.3, 0, Math.PI * 1.1, Math.PI * 1.9); c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 1.2; c.stroke();
+    } },
+
+    { id: 'headphones', name: 'Headphones', top: -69, draw: function (c) {
+      c.beginPath(); c.moveTo(-14, 6); c.bezierCurveTo(-16, -15, 12, -16, 14.5, 1.5);
+      c.strokeStyle = OL; c.lineWidth = 8.5; c.stroke();
+      c.strokeStyle = '#3d4459'; c.lineWidth = 4; c.stroke();
+      c.beginPath(); c.moveTo(-10, -3); c.bezierCurveTo(-8, -10, 5, -12, 9, -6); c.strokeStyle = 'rgba(255,255,255,0.25)'; c.lineWidth = 1.4; c.stroke();
+      // band end on the far side
+      part(c, function (c) { rr(c, 11.5, -0.5, 5.5, 5, 2.2); }, '#2b3045', 4.5);
+      // ear cup on the near side of the head (behind the visor)
+      shaded(c, function (c) { rr(c, -19.5, 3, 9.5, 14.5, 4.5); }, '#5fd8ff', '#1a8cbf', 2, -1.5);
+      part(c, function (c) { rr(c, -17, 6.5, 4.6, 8, 2.3); }, '#2b3045', 2);
+      shine(c, -12.4, 5.6, 1.1, 2, 0.2, 0.6);
+    } },
+
+    { id: 'sprout', name: 'Sprout', top: -79, anim: true, draw: function (c, o) {
+      var sway = Math.sin((o.time || 0) * 2.1) * 0.12;
+      c.save(); c.translate(0, -1); c.rotate(sway);
+      c.beginPath(); c.moveTo(0, 2); c.quadraticCurveTo(1.5, -6, 0, -12);
+      c.strokeStyle = OL; c.lineWidth = 6; c.stroke();
+      c.strokeStyle = '#46c05a'; c.lineWidth = 2.6; c.stroke();
+      var leaf = function (s) {
+        return function (c) {
+          c.beginPath(); c.moveTo(0, -11);
+          c.bezierCurveTo(s * 4, -20, s * 13, -21, s * 15, -16);
+          c.bezierCurveTo(s * 12, -10, s * 4, -9, 0, -11);
+          c.closePath();
+        };
+      };
+      shaded(c, leaf(-1), '#5fdc6e', '#2f9a45', 1.5, -1.5);
+      shaded(c, leaf(1), '#5fdc6e', '#2f9a45', 1.5, -1.5);
+      c.beginPath(); c.moveTo(1.5, -12); c.quadraticCurveTo(7, -16, 12, -16); c.moveTo(-1.5, -12); c.quadraticCurveTo(-7, -16, -12, -16);
+      c.strokeStyle = 'rgba(20,90,40,0.55)'; c.lineWidth = 1.3; c.stroke();
+      c.restore();
+    } },
+
+    { id: 'santa', name: 'Santa Hat', top: -77, tilt: -0.04, draw: function (c) {
+      shaded(c, function (c) {
+        c.beginPath();
+        c.moveTo(15, 2);
+        c.bezierCurveTo(14, -10, 8, -19, -2, -18);
+        c.bezierCurveTo(-12, -17, -18, -9, -21, -1);
+        c.quadraticCurveTo(-16, -5, -12.5, -5.5);
+        c.quadraticCurveTo(-14.5, -2, -14.5, 2);
+        c.closePath();
+      }, '#e8273a', '#a3101f', 3, -2);
+      shine(c, 6, -12, 3, 1.5, 0.5, 0.25);
+      // fur trim
+      var fur = function (c) { c.beginPath(); c.moveTo(-16, 7.5); c.bezierCurveTo(-17, 1, -15, -1, -10, -1.5); c.quadraticCurveTo(1, -4, 12, -1.5); c.bezierCurveTo(17, -1, 18, 3, 17, 7.5); c.quadraticCurveTo(0.5, 10.5, -16, 7.5); c.closePath(); };
+      shaded(c, fur, '#ffffff', '#cfd6e6', 1.5, -1.5);
+      // pom-pom hanging behind
+      part(c, function (c) { ell(c, -22, 0, 5, 5); }, '#ffffff');
+      ell(c, -21, 1.5, 3, 2.2); c.fillStyle = 'rgba(160,170,200,0.5)'; c.fill();
+      shine(c, -23.5, -1.5, 1.6, 1.2, 0, 0.9);
+    } },
+
+    { id: 'grad', name: 'Graduation Cap', top: -73, tilt: -0.08, draw: function (c) {
+      shaded(c, capPath(13.5, 14.5, 4, 3), '#2b2f3f', '#171a24', 2, -1.5);
+      var board = function (c) { c.beginPath(); c.moveTo(-21, -6); c.lineTo(1, -14); c.lineTo(22, -6); c.lineTo(1, 1); c.closePath(); };
+      shaded(c, board, '#3a3f54', '#22263a', 0, -1.4);
+      c.beginPath(); c.moveTo(-21, -6); c.lineTo(1, 1); c.lineTo(22, -6); c.lineTo(22, -3.5); c.lineTo(1, 3.5); c.lineTo(-21, -3.5); c.closePath();
+      c.fillStyle = '#171a24'; c.fill(); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      // tassel
+      c.beginPath(); c.moveTo(1, -7); c.quadraticCurveTo(-10, -9, -15, -4); c.lineTo(-16, 5);
+      c.strokeStyle = OL; c.lineWidth = 4.5; c.stroke(); c.strokeStyle = '#ffcc33'; c.lineWidth = 2; c.stroke();
+      part(c, function (c) { c.beginPath(); c.moveTo(-18.5, 4); c.lineTo(-13.5, 4); c.lineTo(-13, 11); c.lineTo(-19, 11); c.closePath(); }, '#ffcc33', 3);
+      part(c, function (c) { ell(c, 1, -7, 2.3, 1.4); }, '#ffcc33', 2.5);
+      shine(c, 8, -8, 5, 1.3, -0.33, 0.18);
+    } },
+
+    { id: 'police', name: 'Police Cap', top: -71, tilt: -0.05, draw: function (c) {
+      var crown = function (c) {
+        c.beginPath();
+        c.moveTo(-13, 3);
+        c.lineTo(-17, -9);
+        c.quadraticCurveTo(-2, -16, 17, -10);
+        c.lineTo(14, 3);
+        c.closePath();
+      };
+      shaded(c, crown, '#2c3f86', '#18245a', 2.5, -2);
+      shine(c, 3, -11, 8, 1.4, -0.12, 0.2);
+      var band = function (c) { c.beginPath(); c.moveTo(-13, 7); c.lineTo(-13.3, 2.2); c.quadraticCurveTo(0, 0.4, 14.3, 2.2); c.lineTo(14, 7); c.quadraticCurveTo(0, 9, -13, 7); c.closePath(); };
+      part(c, band, '#141a33', 4.5);
+      var bill = function (c) { c.beginPath(); c.moveTo(6, 5); c.quadraticCurveTo(18, 3.5, 25, 7); c.quadraticCurveTo(22, 10.5, 14, 9.5); c.quadraticCurveTo(9, 9, 5, 9); c.closePath(); };
+      shaded(c, bill, '#1d2235', '#0c0e18', 0, -1.6);
+      shine(c, 17, 5.6, 4, 0.8, 0.05, 0.35);
+      c.fillStyle = '#ffd23f';
+      star(c, 5, -5.5, 4.4, 2.4, 6, 0); c.fill(); c.strokeStyle = OL; c.lineWidth = 1.8; c.stroke();
+      ell(c, 5, -5.5, 1.4, 1.4); c.fillStyle = '#c98c08'; c.fill();
+    } },
+
+    { id: 'antenna', name: 'Antenna', top: -91, anim: true, draw: function (c, o) {
+      var t = o.time || 0;
+      var wob = Math.sin(t * 3.1) * 2.2 + (typeof o.walk === 'number' ? Math.sin(o.walk * TAU) * 1.4 : 0);
+      var tx = -2 + wob, ty = -28;
+      part(c, function (c) { rr(c, -5.5, -3.5, 10, 6, 2.5); }, '#9aa6c3', 4.5);
+      c.beginPath(); c.moveTo(-0.5, -3); c.quadraticCurveTo(-1, -16, tx, ty);
+      c.strokeStyle = OL; c.lineWidth = 5; c.stroke();
+      c.strokeStyle = '#c6cde0'; c.lineWidth = 2; c.stroke();
+      var on = (Math.sin(t * 4) > -0.2);
+      if (on) { var g = c.createRadialGradient(tx, ty, 1, tx, ty, 11); g.addColorStop(0, 'rgba(255,80,90,0.55)'); g.addColorStop(1, 'rgba(255,80,90,0)'); c.fillStyle = g; ell(c, tx, ty, 11, 11); c.fill(); }
+      part(c, function (c) { ell(c, tx, ty, 4.6, 4.6); }, on ? '#ff3b4a' : '#a3202c', 5);
+      shine(c, tx - 1.4, ty - 1.6, 1.5, 1.1, 0, 0.85);
+    } },
+
+    { id: 'egg', name: 'Fried Egg', top: -66, tilt: -0.05, draw: function (c) {
+      var white = function (c) {
+        c.beginPath();
+        c.moveTo(-15, 4);
+        c.bezierCurveTo(-19, -1, -12, -5, -8, -6);
+        c.bezierCurveTo(-4, -11, 4, -8, 7, -8);
+        c.bezierCurveTo(13, -9, 19, -4, 16, 1);
+        c.bezierCurveTo(20, 4, 13, 7, 9, 5);
+        c.bezierCurveTo(4, 8, -4, 4, -8, 6);
+        c.bezierCurveTo(-11, 8, -15, 7, -15, 4);
+        c.closePath();
+      };
+      shaded(c, white, '#ffffff', '#d2d9e8', 1.5, -1.5);
+      part(c, function (c) { ell(c, 1.5, -4.5, 6, 5); }, '#ffb21e', 3.4);
+      ell(c, 2.5, -3.5, 4.4, 3.6); c.fillStyle = '#ffc93f'; c.fill();
+      shine(c, -0.5, -6.8, 1.9, 1.2, -0.3, 0.9);
+    } },
+
+    { id: 'fez', name: 'Fez', top: -77, tilt: -0.12, draw: function (c, o) {
+      var cone = function (c) { c.beginPath(); c.moveTo(-10.5, 2); c.lineTo(-7.5, -17); c.quadraticCurveTo(1, -19, 8.5, -17); c.lineTo(11.5, 2); c.quadraticCurveTo(0.5, 4.5, -10.5, 2); c.closePath(); };
+      shaded(c, cone, '#d8283a', '#8f0f20', 3, -1);
+      ell(c, 0.5, -17.3, 8, 2.1); c.fillStyle = '#ef4656'; c.fill(); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      // tassel swinging at the back
+      var sw = typeof o.walk === 'number' ? Math.sin(o.walk * TAU) * 1.5 : 0;
+      c.beginPath(); c.moveTo(0.5, -17.5); c.quadraticCurveTo(-8, -17, -10.5 + sw, -8);
+      c.strokeStyle = OL; c.lineWidth = 4.2; c.stroke(); c.strokeStyle = '#1d2030'; c.lineWidth = 1.8; c.stroke();
+      part(c, function (c) { c.beginPath(); c.moveTo(-12.5 + sw, -9); c.lineTo(-8.5 + sw, -9); c.lineTo(-8 + sw, -2); c.lineTo(-13 + sw, -2); c.closePath(); }, '#1d2030', 3);
+      part(c, function (c) { ell(c, 0.5, -17.6, 1.6, 1); }, '#1d2030', 2);
+      shine(c, 6, -9, 1.2, 4.5, 0.12, 0.25);
+    } },
+
+    { id: 'bandana', name: 'Ninja Band', top: -64, anim: true, draw: function (c, o) {
+      var t = o.time || 0, f1 = Math.sin(t * 5) * 2, f2 = Math.sin(t * 5 + 1.3) * 2;
+      // knot tails fluttering behind
+      part(c, function (c) { c.beginPath(); c.moveTo(-14, 1); c.quadraticCurveTo(-20, -1 + f1, -26, -4 + f1); c.lineTo(-24, 1.5 + f1); c.quadraticCurveTo(-19, 2, -14, 4.5); c.closePath(); }, '#e8273a', 4.5);
+      part(c, function (c) { c.beginPath(); c.moveTo(-14, 3); c.quadraticCurveTo(-19, 6 + f2, -24, 9 + f2); c.lineTo(-20, 11 + f2); c.quadraticCurveTo(-17, 8, -13, 6); c.closePath(); }, '#c41a2c', 4.5);
+      var band = function (c) { c.beginPath(); c.moveTo(-14.6, 6); c.lineTo(-13.7, -0.5); c.quadraticCurveTo(0.5, -4.5, 15.6, -0.5); c.lineTo(16.6, 5.5); c.quadraticCurveTo(0.5, 2, -14.6, 6); c.closePath(); };
+      shaded(c, band, '#ff3b4a', '#b0121f', 1.5, -1.2);
+      part(c, function (c) { ell(c, -14.5, 2.5, 3, 3.4); }, '#e8273a', 3.5);
+      c.beginPath(); c.moveTo(-8, -0.8); c.quadraticCurveTo(0.5, -3, 10, -1); c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 1.2; c.stroke();
+    } },
+
+    { id: 'pirate', name: 'Pirate Hat', top: -76, tilt: -0.04, draw: function (c) {
+      var hat = function (c) {
+        c.beginPath();
+        c.moveTo(-22, 2);
+        c.quadraticCurveTo(-24, -10, -16, -14);
+        c.quadraticCurveTo(-9, -9, 1, -18);
+        c.quadraticCurveTo(10, -9, 18, -14);
+        c.quadraticCurveTo(25, -10, 23, 2);
+        c.quadraticCurveTo(0.5, 6, -22, 2);
+        c.closePath();
+      };
+      shaded(c, hat, '#2a2d3d', '#14161f', 2.5, -1.5);
+      c.beginPath(); c.moveTo(-21.5, -1.5); c.quadraticCurveTo(0.5, 2.5, 22.5, -1.5);
+      c.strokeStyle = OL; c.lineWidth = 4.5; c.stroke(); c.strokeStyle = '#ffcc33'; c.lineWidth = 2; c.stroke();
+      // skull and crossbones
+      c.strokeStyle = '#f4f1ea'; c.lineWidth = 2; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(-3.5, -1); c.lineTo(5.5, -9); c.moveTo(5.5, -1); c.lineTo(-3.5, -9); c.stroke();
+      c.fillStyle = '#f4f1ea';
+      ell(c, 1, -8.5, 3.6, 3.3); c.fill();
+      c.fillRect(-0.8, -6.5, 3.6, 3);
+      c.fillStyle = '#14161f';
+      ell(c, -0.3, -8.3, 1, 1.1); c.fill(); ell(c, 2.3, -8.3, 1, 1.1); c.fill();
+      shine(c, 10, -10, 3, 1.1, 0.5, 0.2);
+    } },
+
+    { id: 'cat', name: 'Cat Ears', top: -76, draw: function (c, o) {
+      var main = o.color || '#a7b0c8', dark = o.dark || '#6d7794';
+      var ear = function (bx, tipx) {
+        return function (c) {
+          c.beginPath();
+          c.moveTo(bx - 6.5, 3.5);
+          c.quadraticCurveTo(bx - 4, -8, tipx, -16);
+          c.quadraticCurveTo(bx + 5, -8, bx + 7, 2);
+          c.quadraticCurveTo(bx, 4.5, bx - 6.5, 3.5);
+          c.closePath();
+        };
+      };
+      shaded(c, ear(-7, -10), main, dark, 2.5, -1);
+      shaded(c, ear(8, 10.5), main, dark, 2.5, -1);
+      var inner = function (bx, tipx) { c.beginPath(); c.moveTo(bx - 3, 1); c.quadraticCurveTo(bx - 1.6, -6, tipx, -11); c.quadraticCurveTo(bx + 2.5, -5, bx + 3.8, 0.8); c.closePath(); c.fillStyle = '#ffa3c7'; c.fill(); };
+      inner(-7, -9); inner(8, 9.5);
+    } },
+
+    { id: 'cone', name: 'Traffic Cone', top: -92, tilt: -0.1, draw: function (c) {
+      var cone = function (c) { c.beginPath(); c.moveTo(-10.5, 0); c.lineTo(-3, -31); c.quadraticCurveTo(1, -33, 5, -31); c.lineTo(12.5, 0); c.closePath(); };
+      shaded(c, cone, '#ff8a1f', '#c9510a', 3, -1);
+      c.save(); cone(c); c.clip();
+      c.fillStyle = '#ffffff';
+      c.beginPath(); c.moveTo(-14, -9); c.quadraticCurveTo(1, -6, 16, -9); c.lineTo(16, -15); c.quadraticCurveTo(1, -12, -14, -15); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(-14, -21); c.quadraticCurveTo(1, -18.5, 16, -21); c.lineTo(16, -25); c.quadraticCurveTo(1, -22.5, -14, -25); c.closePath(); c.fill();
+      c.fillStyle = 'rgba(80,90,120,0.35)'; c.fillRect(-14, -15, 9, 30); c.fillRect(-14, -25, 12, 4);
+      c.restore();
+      cone(c); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      shaded(c, function (c) { rr(c, -16, -1.5, 33, 6.5, 2.2); }, '#ff8a1f', '#b8470a', 0, -1.6);
+      shine(c, 5.5, -18, 0.9, 7, -0.24, 0.3);
+    } },
+
+    { id: 'propeller', name: 'Propeller Cap', top: -79, anim: true, draw: function (c, o) {
+      var t = o.time || 0;
+      var cap = capPath(14.5, 15.5, 4.5, 8.5);
+      shaded(c, cap, '#ffd23f', '#c98c08', 3, -2);
+      c.save(); cap(c); c.clip();
+      c.fillStyle = '#e8273a'; c.beginPath(); c.moveTo(-0.5, -9); c.lineTo(-16, 6); c.lineTo(-6, 7); c.closePath(); c.fill();
+      c.fillStyle = '#3d82ff'; c.beginPath(); c.moveTo(1.5, -9); c.lineTo(8, 7); c.lineTo(17, 6); c.closePath(); c.fill();
+      c.restore();
+      cap(c); c.strokeStyle = OL; c.lineWidth = 2; c.stroke();
+      // bill
+      part(c, function (c) { c.beginPath(); c.moveTo(9, 2); c.quadraticCurveTo(18, 1, 24, 5); c.quadraticCurveTo(18, 7.5, 10, 6.5); c.closePath(); }, '#3ee07a', 4);
+      // mast + spinning propeller (side view: blades swing across)
+      c.beginPath(); c.moveTo(0.5, -8); c.lineTo(0.5, -14); c.strokeStyle = OL; c.lineWidth = 4.5; c.stroke(); c.strokeStyle = '#9aa6c3'; c.lineWidth = 1.8; c.stroke();
+      var a = t * 14, w = Math.cos(a) * 13, w2 = Math.cos(a + Math.PI) * 13;
+      part(c, function (c) { ell(c, 0.5 + w / 2, -15, Math.abs(w) / 2 + 1.2, 2.2); }, '#e8273a', 3.4);
+      part(c, function (c) { ell(c, 0.5 + w2 / 2, -15, Math.abs(w2) / 2 + 1.2, 2.2); }, '#3d82ff', 3.4);
+      part(c, function (c) { ell(c, 0.5, -15, 2.2, 2.2); }, '#3ee07a', 3);
+      shine(c, 7, -4, 2.6, 1.4, 0.45, 0.35);
+    } }
+  ];
+
+  var HATS = DEFS.map(function (d, i) { return { id: d.id, name: d.name, index: i }; });
+
+  function count() { return DEFS.length; }
+  function valid(idx) { idx = idx | 0; return idx > 0 && idx < DEFS.length ? idx : 0; }
+  function def(idx) { return DEFS[valid(idx)]; }
+
+  // Paint hat idx (crewmate-local coordinates; the caller has already applied facing/scale/bob).
+  function draw(c, idx, opts) {
+    if (!c) return;
+    var d = DEFS[valid(idx)];
+    if (!d.draw) return;
+    opts = opts || {};
+    if (opts.dead) return;                       // the head is gone
+    c.save();
+    try {
+      c.lineJoin = 'round'; c.lineCap = 'round';
+      // tiny lag bounce on the walk cycle (the body already bobs)
+      var lift = typeof opts.walk === 'number' && !opts.ghost ? -Math.max(0, Math.sin(opts.walk * TAU * 2 + 0.9)) * 0.9 : 0;
+      c.translate(OX, OY + lift);
+      if (d.tilt) { c.translate(0, 4); c.rotate(d.tilt); c.translate(0, -4); }
+      d.draw(c, opts);
+    } finally { c.restore(); }
+  }
+
+  IS.HATS = HATS;
+  IS.hats = {
+    draw: draw,
+    count: count,
+    valid: valid,
+    name: function (idx) { return DEFS[valid(idx)].name; },
+    // crew-space y of the highest painted point (≤ -58), for framing and name tags
+    top: function (idx) { return Math.min(-58, def(idx).top || -58); },
+    maxTop: function () { var m = -58; for (var i = 0; i < DEFS.length; i++) m = Math.min(m, DEFS[i].top || -58); return m; },
+    // true when the hat moves over time (renderers must not freeze it in a sprite)
+    animated: function (idx) { return !!def(idx).anim; }
+  };
+})(typeof window !== 'undefined' ? window : typeof globalThis !== 'undefined' ? globalThis : this);
 
 </script>
 <script>/* js/net-livekit.js */
-/* placeholder: being written */
+/* Starship Sus — LiveKit transport for the self-hosted build. See SPEC.md §3 and §7.
+ * IS.lkTransport emulates the Room-like presence API of §3 on top of livekit-client rooms:
+ *   - one LiveKit Room per room name ("ss-lobby" for the lobby, "ss-<code>" for game rooms);
+ *   - LiveKit identity = IS.net.myPeer;
+ *   - my presence is sent as a data packet (topic "ss"): lossy, throttled to 20/s, on change,
+ *     plus a reliable full snapshot every 1s and as soon as another participant connects;
+ *   - peers() = me + the participants that have sent presence; a peer is removed when it
+ *     disconnects (or after 4s of silence once LiveKit no longer lists it, 30s otherwise).
+ * Inert unless window.SS_LIVEKIT and window.LivekitClient exist (the claude.ai build has neither).
+ *
+ * Wire format (UTF-8 text): "<kind><seq>|<presence JSON>" — kind "p" lossy update, "P" reliable
+ * snapshot. seq grows with every change of my presence, so a late snapshot never overrides a
+ * newer lossy update.
+ */
+(function () {
+  'use strict';
+  var IS = (window.IS = window.IS || {});
+
+  var KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+  var NAME_RE = /^ss-[a-z0-9-]{1,40}$/;
+  var LIMIT = 4096;
+  var TOPIC = 'ss';
+  var T = { HEARTBEAT: 1000, TIMEOUT: 4000, CONNECTED_TIMEOUT: 30000, THROTTLE: 50, CONNECT_TIMEOUT: 12000, RETRY: 3000 };
+  var EMPTY = Object.freeze([]);
+
+  function noop() {}
+  function err(code, msg) { var e = new Error(msg || code); e.code = code; return e; }
+  var enc = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+  var dec = typeof TextDecoder !== 'undefined' ? new TextDecoder() : null;
+  function utf8Len(s) { return enc ? enc.encode(s).length : unescape(encodeURIComponent(s)).length; }
+  function deepFreeze(o) {
+    if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+      Object.freeze(o);
+      for (var k in o) deepFreeze(o[k]);
+    }
+    return o;
+  }
+  function isPlainObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+  function makePeer(peer, isMe, presence, updatedAt) {
+    return Object.freeze({
+      peer: peer, by: null, isMe: isMe, sameTab: isMe, kind: 'viewer', guest: false,
+      presence: presence, updatedAt: updatedAt
+    });
+  }
+  function frameScheduler(fn) {
+    var pending = false;
+    return function () {
+      if (pending) return;
+      pending = true;
+      var done = false;
+      function run() { if (done) return; done = true; pending = false; fn(); }
+      if (typeof requestAnimationFrame === 'function') { try { requestAnimationFrame(run); } catch (e) { /* ignore */ } }
+      setTimeout(run, 40);
+    };
+  }
+  function cfg() { return window.SS_LIVEKIT || null; }
+  function lib() { return window.LivekitClient || null; }
+  function ev(name) { var L = lib(); return (L && L.RoomEvent && L.RoomEvent[name]) || name.charAt(0).toLowerCase() + name.slice(1); }
+
+  function fetchToken(name, peer) {
+    var c = cfg();
+    var base = (c && c.tokenUrl) || '/api/among-us/token';
+    var url = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'room=' + encodeURIComponent(name) + '&identity=' + encodeURIComponent(peer);
+    return fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok || !j || typeof j.token !== 'string' || !j.token) throw err('token', (j && j.error) || ('token request failed (' + r.status + ')'));
+        var u = j.url || (c && c.url);
+        if (typeof u !== 'string' || !u) throw err('token', 'token response has no LiveKit url');
+        return { token: j.token, url: u };
+      });
+    });
+  }
+
+  function withTimeout(p, ms, what) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(err('timeout', what + ' timed out')); }, ms);
+      p.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+
+  // ======================================================================= one room
+  var rooms = Object.create(null); // name -> {room, ready: Promise, lk()}
+
+  function LkRoom(name, me, opts) {
+    var LK = lib();
+    var isLobby = !!(opts && opts.lobby);
+    var closed = false;
+    var lk = null;          // current livekit Room
+    var gen = 0;            // connection generation (lobby reconnects)
+    var live = false;       // connected and able to send
+    var everConnected = false;
+    var mine = {}, mineJson = '{}', mySeq = 0;
+    var entries = new Map(); // peer -> {obj, json, seq, heard}
+    entries.set(me, { obj: makePeer(me, true, deepFreeze({}), Date.now()), json: '{}', seq: 0, heard: Infinity });
+    var snapshot = EMPTY, dirty = true;
+    var listeners = [];
+    var pj = new Map(), pl = new Map(), pu = new Map();
+    var lastSent = 0, sendTimer = null, hb = null, retryTimer = null;
+
+    function noteJoin(o) { if (pl.has(o.peer)) { pl.delete(o.peer); pu.set(o.peer, o); } else pj.set(o.peer, o); }
+    function noteUpdate(o) { if (pj.has(o.peer)) pj.set(o.peer, o); else pu.set(o.peer, o); }
+    function noteLeft(o) {
+      if (pj.has(o.peer)) { pj.delete(o.peer); return; }
+      pu.delete(o.peer); pl.set(o.peer, o);
+    }
+    function peers() {
+      if (dirty) {
+        var arr = [];
+        entries.forEach(function (e) { arr.push(e.obj); });
+        snapshot = Object.freeze(arr);
+        dirty = false;
+      }
+      return snapshot;
+    }
+    var schedule = frameScheduler(flush);
+    function flush() {
+      if (closed) return;
+      var ps = peers();
+      var j = Array.from(pj.values()), l = Array.from(pl.values()), u = Array.from(pu.values());
+      pj.clear(); pl.clear(); pu.clear();
+      var diff = j.length || l.length || u.length;
+      var change = Object.freeze({ peers: ps, joined: Object.freeze(j), left: Object.freeze(l), updated: Object.freeze(u) });
+      var ls = listeners.slice();
+      for (var i = 0; i < ls.length; i++) {
+        var L = ls[i];
+        if (L.dead) continue;
+        var c = change;
+        if (!L.fresh && !diff) continue;
+        if (L.fresh) {
+          L.fresh = false;
+          c = Object.freeze({ peers: ps, joined: ps, left: EMPTY, updated: EMPTY });
+        }
+        try { L.fn(c); } catch (e) { setTimeout(function () { throw e; }); }
+      }
+    }
+
+    // ---- sending
+    function packet(kind) { var s = kind + mySeq + '|' + mineJson; return enc ? enc.encode(s) : s; }
+    function publish(kind, reliable) {
+      if (!live || closed || !lk || !lk.localParticipant) return;
+      try {
+        var p = lk.localParticipant.publishData(packet(kind), { reliable: reliable, topic: TOPIC });
+        if (p && typeof p.catch === 'function') p.catch(noop);
+      } catch (e) { /* ignore */ }
+    }
+    function sendSnapshot() { publish('P', true); }
+    function sendNow() {
+      if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+      lastSent = Date.now();
+      publish('p', false);
+    }
+    function queueSend() {
+      if (sendTimer || !live) return;
+      var wait = Math.max(0, lastSent + T.THROTTLE - Date.now());
+      sendTimer = setTimeout(function () { sendTimer = null; sendNow(); }, wait);
+    }
+
+    // ---- receiving
+    function remove(peer) {
+      var e = entries.get(peer);
+      if (!e || peer === me) return;
+      entries.delete(peer);
+      dirty = true;
+      noteLeft(e.obj);
+      schedule();
+    }
+    function removeAllRemote() { entries.forEach(function (e, peer) { if (peer !== me) remove(peer); }); }
+    function onData(payload, participant, kind, topic) {
+      if (closed || !participant || typeof participant.identity !== 'string') return;
+      if (topic !== undefined && topic !== null && topic !== TOPIC) return;
+      var peer = participant.identity;
+      if (!peer || peer === me || peer.length > 64) return;
+      var s;
+      try { s = typeof payload === 'string' ? payload : dec ? dec.decode(payload) : String.fromCharCode.apply(null, payload); } catch (e) { return; }
+      if (typeof s !== 'string' || s.length > LIMIT * 4 + 32) return;
+      var k = s.charAt(0), bar = s.indexOf('|');
+      if ((k !== 'p' && k !== 'P') || bar < 2 || bar > 20) return;
+      var seq = Number(s.slice(1, bar)), json = s.slice(bar + 1);
+      if (!isFinite(seq) || seq < 0 || utf8Len(json) > LIMIT) return;
+      var now = Date.now(), e = entries.get(peer);
+      if (e && seq < e.seq) { e.heard = now; return; } // stale (reordered snapshot)
+      if (e && e.json === json) { e.heard = now; e.seq = seq; return; }
+      var pres;
+      try { pres = JSON.parse(json); } catch (x) { return; }
+      if (!isPlainObj(pres)) return;
+      if (!e) {
+        e = { obj: makePeer(peer, false, deepFreeze(pres), now), json: json, seq: seq, heard: now };
+        entries.set(peer, e);
+        dirty = true;
+        noteJoin(e.obj);
+        schedule();
+      } else {
+        e.heard = now; e.seq = seq; e.json = json;
+        e.obj = makePeer(peer, false, deepFreeze(pres), now);
+        dirty = true;
+        noteUpdate(e.obj);
+        schedule();
+      }
+    }
+    function lkHas(peer) {
+      try {
+        var rp = lk && lk.remoteParticipants;
+        if (rp && typeof rp.forEach === 'function') {
+          var found = false;
+          rp.forEach(function (p) { if (p && p.identity === peer) found = true; });
+          return found;
+        }
+      } catch (e) { /* ignore */ }
+      return false;
+    }
+    function tick() {
+      if (closed) return;
+      sendSnapshot();
+      var now = Date.now();
+      entries.forEach(function (e, peer) {
+        if (peer === me) return;
+        var limit = live && lkHas(peer) ? T.CONNECTED_TIMEOUT : T.TIMEOUT;
+        if (now - e.heard > limit) remove(peer);
+      });
+    }
+
+    function failAll(code) {
+      var e = err(code || 'disconnected', 'LiveKit room disconnected');
+      var ls = listeners.slice();
+      for (var i = 0; i < ls.length; i++) if (!ls[i].dead && ls[i].onError) { try { ls[i].onError(e); } catch (x) { /* ignore */ } }
+    }
+
+    // ---- connection
+    function connect() {
+      var my = ++gen;
+      var r;
+      try {
+        r = new LK.Room({ adaptiveStream: false, dynacast: false, disconnectOnPageLeave: true });
+      } catch (e) { return Promise.reject(e); }
+      lk = r;
+      var E = function (n, fn) { r.on(ev(n), function () { if (my === gen && !closed) fn.apply(null, arguments); }); };
+      E('DataReceived', onData);
+      E('ParticipantConnected', function () { sendSnapshot(); });
+      E('ParticipantDisconnected', function (p) { if (p && p.identity) remove(p.identity); });
+      E('Reconnected', function () { live = true; sendSnapshot(); });
+      E('Disconnected', function () {
+        gen++; // ignore anything else from this connection
+        live = false;
+        removeAllRemote();
+        if (isLobby) retryLater(); else failAll('disconnected');
+      });
+      return fetchToken(name, me).then(function (t) {
+        if (closed || my !== gen) throw err('closed', 'room left');
+        return r.connect(t.url, t.token, { autoSubscribe: !isLobby });
+      }).then(function () {
+        if (closed || my !== gen) { try { r.disconnect(); } catch (e) { /* ignore */ } throw err('closed', 'room left'); }
+        live = true; everConnected = true;
+        sendNow();
+        sendSnapshot();
+        return room;
+      }, function (e) {
+        var cur = my === gen;
+        if (cur) { gen++; live = false; }
+        try { r.disconnect(); } catch (x) { /* ignore */ }
+        if (cur && isLobby && everConnected) retryLater();
+        throw e;
+      });
+    }
+    // The lobby reconnects by itself after a successful first connection (game rooms report the
+    // disconnect to onPeers' error handlers instead; LiveKit already retried by then).
+    function retryLater() {
+      if (closed || retryTimer) return;
+      retryTimer = setTimeout(function () { retryTimer = null; if (!closed) connect().catch(noop); }, T.RETRY);
+    }
+
+    var room = {
+      name: isLobby ? '' : name,
+      presence: function (patch) {
+        if (closed) return Promise.reject(err('invalid_argument', 'room left'));
+        if (!isPlainObj(patch)) return Promise.reject(err('invalid_argument', 'patch must be an object'));
+        var next = {}, k;
+        for (k in mine) next[k] = mine[k];
+        for (k in patch) {
+          if (!KEY_RE.test(k) || k === 'prototype' || k in Object.prototype) {
+            return Promise.reject(err('invalid_argument', 'bad presence key ' + k));
+          }
+          if (patch[k] === null) delete next[k]; else if (patch[k] !== undefined) next[k] = patch[k];
+        }
+        var json;
+        try { json = JSON.stringify(next); } catch (e) { return Promise.reject(err('invalid_argument', 'not JSON')); }
+        var bytes = utf8Len(json);
+        if (bytes > LIMIT) {
+          return Promise.reject(err('invalid_argument', 'presence is ' + bytes + ' bytes; the limit is ' + LIMIT));
+        }
+        if (json !== mineJson) {
+          mine = JSON.parse(json);
+          mineJson = json;
+          mySeq = Math.max(mySeq + 1, Date.now());
+          var e = entries.get(me);
+          e.json = json;
+          e.obj = makePeer(me, true, deepFreeze(JSON.parse(json)), Date.now());
+          dirty = true;
+          noteUpdate(e.obj);
+          schedule();
+          queueSend();
+        }
+        return Promise.resolve();
+      },
+      peers: peers,
+      onPeers: function (fn, onError) {
+        if (typeof fn !== 'function') throw new TypeError('handler must be a function');
+        var L = { fn: fn, onError: typeof onError === 'function' ? onError : null, fresh: true, dead: closed };
+        listeners.push(L);
+        if (!closed) Promise.resolve().then(schedule);
+        return function () { L.dead = true; listeners = listeners.filter(function (x) { return x !== L; }); };
+      },
+      connected: function () { return !closed && live; },
+      onConnection: function (fn) {
+        var dead = false;
+        Promise.resolve().then(function () { if (!dead) fn(!closed && live); });
+        return function () { dead = true; };
+      },
+      emit: function () { return Promise.resolve(); },
+      on: function () { return noop; },
+      leave: function () {
+        if (closed) return Promise.resolve();
+        closed = true; live = false;
+        listeners = [];
+        if (hb) clearInterval(hb);
+        if (sendTimer) clearTimeout(sendTimer);
+        if (retryTimer) clearTimeout(retryTimer);
+        var r = lk;
+        if (rooms[name] && rooms[name].room === room) delete rooms[name];
+        var p;
+        try { p = r && r.disconnect(); } catch (e) { p = null; }
+        return Promise.resolve(p).catch(noop).then(noop);
+      },
+      // extras
+      livekit: function () { return closed ? null : lk; },
+      isLobby: isLobby
+    };
+    hb = setInterval(tick, T.HEARTBEAT);
+    var ready = connect().catch(function (e) { room.leave(); throw e; });
+    return { room: room, ready: ready };
+  }
+
+  function available() {
+    var L = lib();
+    return !!(cfg() && L && typeof L.Room === 'function' && typeof fetch === 'function');
+  }
+
+  // join(name, myPeer, {lobby}) -> Promise<Room-like>; one live room object per name.
+  function join(name, me, opts) {
+    if (!available()) return Promise.reject(err('unavailable', 'LiveKit is not available'));
+    if (typeof name !== 'string' || !NAME_RE.test(name)) return Promise.reject(err('invalid_argument', 'bad room name'));
+    if (typeof me !== 'string' || !/^[A-Za-z0-9_-]{4,40}$/.test(me)) return Promise.reject(err('invalid_argument', 'bad identity'));
+    var cur = rooms[name];
+    if (cur) return cur.ready;
+    var r = LkRoom(name, me, opts);
+    rooms[name] = r;
+    r.ready.catch(noop);
+    return withTimeout(r.ready, T.CONNECT_TIMEOUT, 'LiveKit connect').catch(function (e) { r.room.leave(); throw e; });
+  }
+
+  // The underlying livekit-client Room for a joined room name (for voice.js), or null.
+  function livekitRoom(name) {
+    var r = rooms[name];
+    return r ? r.room.livekit() : null;
+  }
+
+  IS.lkTransport = {
+    available: available,
+    join: join,
+    livekitRoom: livekitRoom,
+    room: function (name) { var r = rooms[name]; return r ? r.room : null; },
+    TOPIC: TOPIC,
+    _timing: T
+  };
+})();
 
 </script>
 <script>/* js/net.js */
-/* Starship Sus — transport. See SPEC.md §3.
- * IS.net normalises the claude.ai artifact `room` capability (presence only) and a
+/* Starship Sus — transport. See SPEC.md §3 and §7.
+ * IS.net normalises the claude.ai artifact `room` capability (presence only), LiveKit rooms
+ * (self-hosted build only: window.SS_LIVEKIT + IS.lkTransport, mode 'livekit') and a
  * BroadcastChannel emulation with the same semantics (several tabs of one browser).
  * Without BroadcastChannel the mode is 'offline': rooms only contain yourself (freeplay).
  */
@@ -1406,6 +2342,16 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     });
   }
 
+  var LK_LOBBY = 'ss-lobby';
+  function lkUsable() {
+    return !!(window.SS_LIVEKIT && IS.lkTransport && typeof IS.lkTransport.available === 'function' && IS.lkTransport.available());
+  }
+  function useLocal() {
+    net.mode = typeof BroadcastChannel === 'function' ? 'local' : 'offline';
+    learnPeer(rid(12));
+    net.lobby = localJoin('__lobby__');
+  }
+
   function init() {
     if (initP) return initP;
     initP = tryRoom().then(function (r) {
@@ -1415,10 +2361,21 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         net.lobby = wrapRoom(r, true);
         try { net.lobby.onPeers(function () { net.lobby.peers(); }); } catch (e) { /* ignore */ }
         net.lobby.peers();
-      } else {
-        net.mode = typeof BroadcastChannel === 'function' ? 'local' : 'offline';
+      } else if (lkUsable()) {
+        // Self-hosted build: LiveKit rooms; the BroadcastChannel emulation is the fallback when
+        // the LiveKit server (or the token endpoint) can't be reached.
         learnPeer(rid(12));
-        net.lobby = localJoin('__lobby__');
+        return IS.lkTransport.join(LK_LOBBY, net.myPeer, { lobby: true }).then(function (lobby) {
+          net.mode = 'livekit';
+          net.lobby = lobby;
+          return { mode: net.mode };
+        }, function (e) {
+          if (typeof console !== 'undefined') console.warn('LiveKit unavailable, falling back to local play:', e && e.message);
+          useLocal();
+          return { mode: net.mode };
+        });
+      } else {
+        useLocal();
       }
       return { mode: net.mode };
     });
@@ -1428,6 +2385,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   function join(name) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) return Promise.reject(err('invalid_argument', 'bad room name'));
     return init().then(function () {
+      if (net.mode === 'livekit') return IS.lkTransport.join(name, net.myPeer);
       if (net.mode !== 'room') return localJoin(name);
       if (wrapped[name]) return wrapped[name];
       if (typeof rawRoom.join !== 'function') throw err('not_permitted', 'named rooms unavailable');
@@ -4131,18 +5089,41 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       c.beginPath(); c.arc(4, -42, 3.6, Math.PI * 1.1, Math.PI * 2.5); c.stroke();
       ell(c, 8, 2, 13, 4); c.fillStyle = 'rgba(160,20,30,0.55)'; c.fill();
     }
+    // hat: above the body (inside the facing / bob / ghost transform), below name tags
+    if (opts.hat && !dead && !opts.noHat && IS.hats && IS.hats.draw) {
+      IS.hats.draw(c, opts.hat, { facing: f, ghost: ghost, time: t, walk: walking ? opts.walk : undefined, color: main, dark: dark });
+    }
+    c.restore();
+  }
+  function hatIdx(h) { return IS.hats && IS.hats.valid ? IS.hats.valid(h) : 0; }
+  function hatAnimated(h) { return !!(h && IS.hats && IS.hats.animated && IS.hats.animated(h)); }
+  // highest painted point of a crewmate wearing hat h (crew coords, unscaled)
+  function hatTop(h) { return h && IS.hats && IS.hats.top ? IS.hats.top(h) : -58; }
+  // Hat only, with exactly the transform drawCrewmate would use (for animated hats over cached sprites)
+  function drawHatLive(c, x, y, colorIdx, opts) {
+    var h = hatIdx(opts.hat);
+    if (!h || opts.dead || !IS.hats || !IS.hats.draw) return;
+    var cc = col(colorIdx), f = opts.facing < 0 ? -1 : 1, ghost = !!opts.ghost;
+    var t = opts.time !== undefined ? opts.time : performance.now() / 1000;
+    var walking = typeof opts.walk === 'number' && !ghost;
+    var bob = walking ? -Math.abs(Math.sin(opts.walk * TAU)) * 2 : 0;
+    c.save();
+    c.translate(x, y); c.scale(f, 1);
+    if (ghost) { c.globalAlpha *= 0.5; c.translate(0, -8); }
+    c.translate(0, bob);
+    IS.hats.draw(c, h, { facing: f, ghost: ghost, time: t, walk: walking ? opts.walk : undefined, color: cc[1], dark: cc[2] });
     c.restore();
   }
 
   // Cached crewmate sprites (per colour / facing / walk frame / ghost wave frame) for the world view.
-  var CREW_W = 84, CREW_H = 108, CREW_OX = 42, CREW_OY = 88;
-  function crewSprite(color, facing, frame, ghost, dead, outline, S) {
-    var key = 'crew|' + color + '|' + facing + '|' + frame + '|' + (ghost ? 1 : 0) + (dead ? 1 : 0) + '|' + (outline || '');
+  var CREW_W = 84, CREW_H = 136, CREW_OX = 42, CREW_OY = 116;
+  function crewSprite(color, facing, frame, ghost, dead, outline, S, hat) {
+    var key = 'crew|' + color + '|' + facing + '|' + frame + '|' + (ghost ? 1 : 0) + (dead ? 1 : 0) + '|' + (outline || '') + '|h' + (hat || 0);
     var sp = sprites.get(key);
     if (sp) return sp;
     var cv = mk(CREW_W * S, CREW_H * S), c = cv.getContext('2d');
     c.scale(S, S);
-    var o = { facing: facing, dead: dead, ghost: ghost, outline: outline, noBob: true };
+    var o = { facing: facing, dead: dead, ghost: ghost, outline: outline, noBob: true, hat: hat || 0 };
     if (ghost) o.time = frame / 8 * (TAU / 6);
     else if (frame >= 0) o.walk = frame / 8;
     drawCrewmate(c, CREW_OX, CREW_OY, color, o);
@@ -4154,8 +5135,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var ghost = !!opts.ghost, frame = -1, dy = 0;
     if (ghost) { frame = Math.floor(((opts.time || 0) * 6 / TAU) * 8) % 8; dy = Math.sin((opts.time || 0) * 2.2) * 3; }
     else if (typeof opts.walk === 'number') frame = Math.floor(opts.walk * 8) % 8;
-    var sp = crewSprite(color | 0, opts.facing < 0 ? -1 : 1, frame, ghost, !!opts.dead, opts.outline || '', S);
+    var hat = opts.dead ? 0 : hatIdx(opts.hat), live = hatAnimated(hat);
+    var sp = crewSprite(color | 0, opts.facing < 0 ? -1 : 1, frame, ghost, !!opts.dead, opts.outline || '', S, live ? 0 : hat);
     c.drawImage(sp.c, x - CREW_OX, y - CREW_OY + dy, CREW_W, CREW_H);
+    if (live) drawHatLive(c, x, y + dy, color, { hat: hat, facing: opts.facing, ghost: ghost, time: opts.time, walk: frame >= 0 && !ghost ? frame / 8 : undefined });
   }
 
   // ------------------------------------------------------------------------------------------
@@ -4516,7 +5499,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         blitCrew(ctx, pl2.x, pl2.y, pl2.color, {
           facing: pl2.f, ghost: !!pl2.ghost || pl2.alive === false,
           walk: pl2.m ? (typeof pl2.walk === 'number' ? ((pl2.walk % 1) + 1) % 1 : ((t * 2.3 + (pl2.slot || 0) * 0.37) % 1)) : undefined,
-          time: t + (pl2.slot || 0), outline: tgt ? '#ff3b4a' : null
+          time: t + (pl2.slot || 0), outline: tgt ? '#ff3b4a' : null, hat: pl2.hat
         }, S);
       }
     }
@@ -4537,14 +5520,17 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.lineJoin = 'round';
       visPlayers.forEach(function (pl) {
-        if (!pl.name) return;
-        var yy = pl.y - (pl.ghost || pl.alive === false ? 74 : 66);
+        var yy = nameY(pl);
+        if (!pl.name) { if (pl.speaking) drawSpeaking(ctx, pl.x, yy - fsz * 0.35, fsz, t); return; }
         ctx.lineWidth = 3.5 / zoom * 1.6;
         ctx.strokeStyle = 'rgba(8,10,20,0.85)';
         ctx.strokeText(pl.name, pl.x, yy);
         ctx.fillStyle = pl.role === 1 ? '#ff3b4a' : (pl.ghost || pl.alive === false) ? 'rgba(232,236,255,0.65)' : '#ffffff';
         ctx.fillText(pl.name, pl.x, yy);
+        if (pl.speaking) drawSpeaking(ctx, pl.x + ctx.measureText(pl.name).width / 2 + fsz * 0.85, yy - fsz * 0.35, fsz, t);
       });
+    } else {
+      visPlayers.forEach(function (pl) { if (pl.speaking) drawSpeaking(ctx, pl.x, nameY(pl) - 8, 14, t); });
     }
 
     // markers & edge arrows
@@ -4575,6 +5561,30 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
+  }
+  // name tag baseline for a world player: above the head, and above a tall hat
+  function nameY(pl) {
+    var ghost = pl.ghost || pl.alive === false;
+    var top = Math.min(-58, hatTop(hatIdx(pl.hat)));
+    return pl.y + Math.min(-66, top - 7) - (ghost ? 8 : 0);
+  }
+  // little animated speaker + sound waves, centred at (x, y), sized to the name font
+  function drawSpeaking(c, x, y, sz, t) {
+    var s = sz / 16;
+    c.save();
+    c.translate(x, y); c.scale(s, s);
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    ell(c, 2, 0, 12.5, 11); c.fillStyle = 'rgba(8,10,20,0.78)'; c.fill();
+    c.strokeStyle = '#3ee07a'; c.lineWidth = 2; c.stroke();
+    c.beginPath();
+    c.moveTo(-6, -3); c.lineTo(-3, -3); c.lineTo(1.5, -7); c.lineTo(1.5, 7); c.lineTo(-3, 3); c.lineTo(-6, 3); c.closePath();
+    c.fillStyle = '#ffffff'; c.fill();
+    for (var i = 0; i < 2; i++) {
+      var a = 0.45 + 0.55 * Math.max(0, Math.sin(t * 9 - i * 1.1));
+      c.beginPath(); c.arc(1.5, 0, 4.5 + i * 3.6, -0.75, 0.75);
+      c.strokeStyle = 'rgba(62,224,122,' + a.toFixed(2) + ')'; c.lineWidth = 1.9; c.stroke();
+    }
+    c.restore();
   }
   function drawArrowHead(x, y, ang, color, s) {
     ctx.setTransform(s, 0, 0, s, x, y);
@@ -7572,6 +8582,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function nowMs() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
+  // hats (IS.HATS / IS.hats from hats.js; everything degrades to "no hat" when missing)
+  function HATS() { return (IS.HATS && IS.HATS.length) ? IS.HATS : null; }
+  function hatCount() { return HATS() ? HATS().length : 1; }
+  function cleanHat(i) { i = parseInt(i, 10) | 0; return i > 0 && i < hatCount() ? i : 0; }
+  function hatName(i) { var L = HATS(); return L && L[cleanHat(i)] ? L[cleanHat(i)].name : 'No hat'; }
+  function hatTop(i) { i = cleanHat(i); return i && IS.hats && IS.hats.top ? Math.min(-58, IS.hats.top(i)) : -58; }
   function lsGet(k, d) { try { var v = window.localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, String(v)); } catch (e) { /* storage unavailable */ } }
 
@@ -7648,7 +8664,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   var E = {};
   var S = {
     inited: false, screen: null, mode: null,
-    name: '', color: 0, myColor: 0, muted: false, touch: false,
+    name: '', color: 0, myColor: 0, hat: 0, hatAt: 0, muted: false, touch: false,
     games: [], lobby: null, lobbySigs: {}, panelOpen: null, panelTab: 'players', localSet: null, localSetAt: 0,
     hud: null, hudSigs: {}, tasksCollapsed: false,
     meeting: null, meetingOpen: false, cards: {}, cardsSig: '', selected: null, pendingVote: null, meetDeadline: 0,
@@ -7748,6 +8764,25 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var s = size / 70;
     drawCrew(ctx, size / 2 + (o && o.dead ? 0 : -1 * s), size * 0.9, ci, Object.assign({ scale: s, facing: 1, noShadow: size < 30 }, o || {}));
   }
+  // Crewmate avatar framed to fit hats: crew-space y from `top` (default: this hat's top) to the feet.
+  function paintAvatar(cv, w, hh, ci, o) {
+    o = o || {};
+    var ctx = sizeCanvas(cv, w, hh);
+    ctx.clearRect(0, 0, w, hh);
+    var top = Math.min(-61, o.top != null ? o.top : hatTop(o.hat)) - 3, bot = 5;
+    var s = Math.min(hh / (bot - top), w / 60, o.maxScale || 99);
+    var d = Object.assign({ scale: s, facing: 1, noShadow: w < 30 }, o);
+    delete d.top; delete d.maxScale;
+    drawCrew(ctx, w / 2 - s, hh - bot * s, ci, d);
+  }
+  function avatarCanvas(w, hh, ci, o, cls) {
+    var cv = h('canvas.crew-cv' + (cls ? '.' + cls : ''), { 'aria-hidden': 'true' });
+    cv.style.width = w + 'px'; cv.style.height = hh + 'px';
+    paintAvatar(cv, w, hh, ci, o);
+    return cv;
+  }
+  // shared framing for a list of people so every avatar in it has the same scale
+  function listTop(list) { var t = -58; (list || []).forEach(function (p) { t = Math.min(t, hatTop(p && p.hat)); }); return t; }
   function crewCanvas(size, ci, o, cls) {
     var cv = h('canvas.crew-cv' + (cls ? '.' + cls : ''), { 'aria-hidden': 'true' });
     cv.style.width = size + 'px'; cv.style.height = size + 'px';
@@ -7756,9 +8791,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   }
 
   // Lineup of crewmates (role reveal, game over). people: [{color,name,isMe,ghost}]
-  function lineupBase(n, w, hAvail, nameSpace) {
+  function lineupBase(n, w, hAvail, nameSpace, head) {
     var spanK = Math.max(0, n - 1);
-    return Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
+    head = head || 64;
+    return Math.min((hAvail - nameSpace - 10) / head, 3, (w - 24) / (46 * spanK + 60), hAvail / (165 * head / 64));
   }
   function drawLineup(cv, people, o) {
     o = o || {};
@@ -7770,7 +8806,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!n) return;
     var arr = people.slice().sort(function (a, b) { return (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0); });
     var nameSpace = o.names ? 26 : 6;
-    var single = lineupBase(n, w, hh, nameSpace);
+    o = Object.assign({}, o, { head: 64 + (-58 - listTop(people)) });
+    var single = lineupBase(n, w, hh, nameSpace, o.head);
     if (n > 4 && single < 1.35 && hh > 240) {
       // two rows: back row (higher, slightly dimmer) then front row with me in the middle
       var nf = Math.ceil(n / 2);
@@ -7791,7 +8828,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     slots.forEach(function (s) { minK = Math.min(minK, s.k); maxK = Math.max(maxK, s.k); });
     var spanK = maxK - minK;
     // fit height, and fit width: total extent = spanK*spacing + ~56*base, with spacing = 46*base
-    var base = Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
+    var head = o.head || 64;
+    var base = Math.min((hAvail - nameSpace - 10) / head, 3, (w - 24) / (46 * spanK + 60), hAvail / (165 * head / 64));
     var spacing = base * 46;
     var shift = -(minK + maxK) / 2 * spacing;
     slots.sort(function (a, b) { return Math.abs(b.k) - Math.abs(a.k); });
@@ -7801,7 +8839,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       var x = w / 2 + shift + sl.k * spacing, y = feetY - ak * base * 3;
       ctx.save();
       try { ctx.filter = 'brightness(' + (1 - dim - 0.07 * ak).toFixed(2) + ')'; } catch (e) { /* unsupported */ }
-      drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost });
+      drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost, hat: cleanHat(sl.p.hat) });
       ctx.restore();
       if (o.names && sl.p.name) {
         var fs = clamp(Math.round(Math.min(sc * 6, spacing * 0.26)), 9, 18);
@@ -7850,13 +8888,13 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (o.floaters) {
       this.nextFl -= dt;
       if (!this.fl && this.nextFl <= 0) {
-        this.fl = { x: -0.08, y: 0.15 + Math.random() * 0.6, vx: 0.022 + Math.random() * 0.015, vy: (Math.random() - 0.5) * 0.01, r: 0, vr: 0.5 + Math.random() * 0.6, c: (Math.random() * COLORS().length) | 0, s: 0.55 + Math.random() * 0.35 };
+        this.fl = { x: -0.08, y: 0.15 + Math.random() * 0.6, vx: 0.022 + Math.random() * 0.015, vy: (Math.random() - 0.5) * 0.01, r: 0, vr: 0.5 + Math.random() * 0.6, c: (Math.random() * COLORS().length) | 0, s: 0.55 + Math.random() * 0.35, hat: Math.random() < 0.75 ? cleanHat(1 + Math.random() * (hatCount() - 1)) : 0 };
       }
       if (this.fl) {
         var f = this.fl;
         f.x += f.vx * dt; f.y += f.vy * dt; f.r += f.vr * dt;
         ctx.save(); ctx.translate(f.x * w, f.y * hh); ctx.rotate(f.r); ctx.globalAlpha = 0.85;
-        drawCrew(ctx, 0, 28 * f.s, f.c, { scale: f.s, facing: 1, noShadow: true });
+        drawCrew(ctx, 0, 28 * f.s, f.c, { scale: f.s, facing: 1, noShadow: true, hat: f.hat });
         ctx.restore();
         if (f.x > 1.1) { this.fl = null; this.nextFl = 10 + Math.random() * 8; }
       }
@@ -7917,6 +8955,87 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     return api;
   }
 
+  // ------------------------------------------------------------------ hat picker
+  // Grid of mini crewmates (in the given colour) wearing every hat. Hats are not exclusive.
+  var HAT_TOP = -99, HAT_BOT = -24;   // bust framing shared by every button: hat + head + upper body
+  function makeHatPicker(onPick, cls) {
+    var wrap = h('div.hat-grid' + (cls ? '.' + cls : ''), { role: 'group', 'aria-label': 'Hat' });
+    var btns = [];
+    var L = HATS() || [];
+    L.forEach(function (hat, i) {
+      var b = h('button.hat-btn', { type: 'button', title: hat.name, 'aria-label': hat.name, 'aria-pressed': 'false' });
+      var cv = h('canvas', { 'aria-hidden': 'true' });
+      b.appendChild(cv);
+      b.addEventListener('click', function () { onPick(i); });
+      btns.push({ b: b, cv: cv, drawn: '' });
+      wrap.appendChild(b);
+    });
+    var api = {
+      el: wrap, sel: -1, color: 0,
+      set: function (sel) {
+        sel = cleanHat(sel);
+        if (api.sel === sel) return;
+        api.sel = sel;
+        btns.forEach(function (o, i) { o.b.setAttribute('aria-pressed', i === sel ? 'true' : 'false'); });
+      },
+      reveal: function () {   // keep the selected hat in view inside a scrolling grid
+        var o = btns[api.sel];
+        if (!o || wrap.scrollHeight <= wrap.clientHeight + 2) return;
+        var top = o.b.offsetTop - wrap.offsetTop, bh = o.b.offsetHeight;
+        if (top < wrap.scrollTop || top + bh > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = Math.max(0, top - (wrap.clientHeight - bh) / 2);
+      },
+      paint: function (color) {
+        if (color != null) api.color = color | 0;
+        btns.forEach(function (o, i) {
+          var w = o.b.clientWidth, hh = o.b.clientHeight;
+          if (!w || !hh) return;
+          var key = w + 'x' + hh + '|' + api.color;
+          if (o.drawn === key) return;
+          o.drawn = key;
+          o.cv.style.width = w + 'px'; o.cv.style.height = hh + 'px';
+          var ctx = sizeCanvas(o.cv, w, hh);
+          ctx.clearRect(0, 0, w, hh);
+          var sc = Math.min((hh - 4) / (HAT_BOT - HAT_TOP), w / 62);
+          drawCrew(ctx, w / 2 - sc * 1.5, hh - 2 - HAT_BOT * sc, api.color, { scale: sc, facing: 1, noShadow: true, hat: i, time: 1.3 });
+        });
+      }
+    };
+    return api;
+  }
+  function injectCss() {
+    if (document.getElementById('ui-hats-css')) return;
+    var css = [
+      '.hat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px}',
+      '.hat-grid.scroll{max-height:124px;overflow-y:auto;overflow-x:hidden;padding:4px 6px 4px 4px;margin:-4px -6px -4px -4px;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}',
+      '.hat-btn{position:relative;aspect-ratio:1;min-width:0;padding:0;border:3px solid var(--outline);border-radius:12px;cursor:pointer;',
+      '  background:radial-gradient(circle at 50% 30%,#2c3a6e,#141b36);box-shadow:0 3px 0 var(--outline);transition:transform .1s, box-shadow .1s;',
+      '  display:block;overflow:hidden;pointer-events:auto}',
+      '.hat-btn canvas{display:block;width:100%;height:100%}',
+      '.hat-btn:hover{transform:translateY(-2px)}',
+      '.hat-btn[aria-pressed="true"]{box-shadow:0 0 0 3px var(--amber), 0 3px 0 var(--outline);background:radial-gradient(circle at 50% 30%,#55497a,#241b40)}',
+      '.hat-btn:first-child::after{content:"";position:absolute;right:4px;top:4px;width:12px;height:12px;border-radius:50%;border:2px solid var(--ink-3);',
+      '  background:linear-gradient(135deg,transparent 43%,var(--ink-3) 43%,var(--ink-3) 57%,transparent 57%)}',
+      '.field-label .hat-cur{margin-left:8px;font:500 13px var(--font-body);letter-spacing:0;text-transform:none;color:var(--amber)}',
+      /* talking indicators */
+      '.plist .av{position:relative;flex:none;display:block;border-radius:12px;transition:box-shadow .15s, background .15s}',
+      '.plist .av canvas{display:block}',
+      '.spk{position:absolute;right:-7px;bottom:-6px;width:21px;height:21px;border-radius:50%;background:var(--green);color:#002611;',
+      '  border:2px solid var(--outline);display:none;place-items:center;pointer-events:none;z-index:2}',
+      '.spk svg{width:13px;height:13px}',
+      '.speaking > .spk,.speaking .av > .spk,.speaking .m-av > .spk{display:grid;animation:spkPulse .7s ease-in-out infinite alternate}',
+      '.plist li.speaking .av,.m-card.speaking .m-crew{box-shadow:0 0 0 3px var(--green), 0 0 14px 4px rgba(62,224,122,.6);background:rgba(62,224,122,.16)}',
+      '.plist li.speaking{border-color:rgba(62,224,122,.55)}',
+      '.m-av{position:relative;flex:none;display:block}',
+      '.m-av .spk{right:-6px;bottom:-4px}',
+      '@keyframes spkPulse{from{transform:scale(.92)}to{transform:scale(1.12)}}',
+      '@media (prefers-reduced-motion:reduce){.speaking > .spk,.speaking .av > .spk,.speaking .m-av > .spk{animation:none}}'
+    ].join('\n');
+    var st = document.createElement('style');
+    st.id = 'ui-hats-css'; st.textContent = css;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function spkBadge() { return h('span.spk', { 'aria-hidden': 'true', html: ICON.soundOn }); }
+
   // ------------------------------------------------------------------ mute
   var muteBtns = [];
   function makeMuteBtn(cls) {
@@ -7970,19 +9089,33 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (E.codeIn) E.codeIn.disabled = off;
     if (E.freeBtn) { E.freeBtn.disabled = !!S.menuBusy; E.freeBtn.classList.toggle('ui-btn--dark', !off); }
   }
-  function doHost() { if (E.hostBtn.disabled) return; sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onCreate', { name: n, color: S.color }); }
+  function doHost() { if (E.hostBtn.disabled) return; sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onCreate', { name: n, color: S.color, hat: S.hat }); }
   function doJoin(code) {
     code = filterCode(code != null ? code : E.codeIn.value);
     if (code.length !== 4) { toast('Enter the 4-letter game code'); E.codeIn.focus(); return; }
     if (S.mode === 'offline') { toast('Offline — only Freeplay is available'); return; }
     sfx('click'); unlockAudio();
     var n = currentName(); menuBusy();
-    fire('onJoin', { code: code, name: n, color: S.color });
+    fire('onJoin', { code: code, name: n, color: S.color, hat: S.hat });
   }
-  function doFree() { sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onFreeplay', { name: n, color: S.color }); }
+  function doFree() { sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onFreeplay', { name: n, color: S.color, hat: S.hat }); }
   function pickMenuColor(i) {
     S.color = i; S.myColor = i; lsSet('ss_color', i);
     E.menuSw.set(i, null);
+    paintHero();
+    if (E.menuHats) E.menuHats.paint(i);
+    sfx('click');
+  }
+  function setMyHat(i) {
+    S.hat = cleanHat(i); S.hatAt = Date.now();
+    lsSet('ss_hat', S.hat);
+    if (E.menuHats) E.menuHats.set(S.hat);
+    if (E.lobbyHats) E.lobbyHats.set(S.hat);
+    txt(E.menuHatCur, hatName(S.hat));
+    txt(E.lobbyHatCur, hatName(S.hat));
+  }
+  function pickMenuHat(i) {
+    setMyHat(i);
     paintHero();
     sfx('click');
   }
@@ -7991,7 +9124,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var sz = E.heroCv.clientWidth || 190;
     var ctx = sizeCanvas(E.heroCv, sz, sz);
     ctx.clearRect(0, 0, sz, sz);
-    drawCrew(ctx, sz * 0.5, sz * 0.9, S.color, { scale: sz / 72, facing: 1 });
+    var top = hatTop(S.hat) - 3, s = Math.min(sz / 72, sz / (6 - top));
+    drawCrew(ctx, sz * 0.5, Math.min(sz * 0.9, sz - 6 * s), S.color, { scale: s, facing: 1, hat: S.hat });
   }
   function makeHowto(cls) {
     return h('section.ui-card.howto' + (cls ? '.' + cls : ''), { 'aria-label': 'How to play' }, [
@@ -8036,6 +9170,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     E.nameIn.addEventListener('input', function () { var v = cleanName(E.nameIn.value); if (v) { S.name = v; lsSet('ss_name', v); } });
     E.nameIn.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') E.nameIn.blur(); });
     E.menuSw = makeSwatches(pickMenuColor);
+    E.menuHats = makeHatPicker(pickMenuHat, 'scroll');
+    E.menuHatCur = h('span.hat-cur', { text: hatName(S.hat) });
     E.hostBtn = h('button.ui-btn.ui-btn--big.ui-btn--block', { type: 'button', html: ICON.rocket + '<span>Host Game</span>' });
     E.hostBtn.addEventListener('click', doHost);
     E.codeIn = h('input.ui-input', { type: 'text', placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Game code', enterkeyhint: 'go', inputmode: 'text' });
@@ -8055,6 +9191,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var main = h('section.ui-card.menu-main', { 'aria-label': 'Play' }, [
       h('div', null, [h('label.field-label', { for: 'ui-name', text: 'Your name' }), E.nameIn]),
       h('div', null, [h('span.field-label', { text: 'Colour' }), E.menuSw.el]),
+      HATS() ? h('div.hat-sec', null, [h('span.field-label', null, ['Hat', E.menuHatCur]), E.menuHats.el]) : null,
       E.hostBtn,
       h('div', null, [h('span.field-label', { text: 'Have a code?' }), h('div.join-row', null, [E.codeIn, E.joinBtn])]),
       h('div.or-sep', { text: 'OR' }),
@@ -8208,7 +9345,11 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     S.panelOpen = !!open;
     E.lpanel.classList.toggle('closed', !S.panelOpen);
     E.panelBtn.setAttribute('aria-expanded', S.panelOpen ? 'true' : 'false');
-    if (S.panelOpen) requestAnimationFrame(function () { E.lobbySw.paint(); });
+    if (S.panelOpen) requestAnimationFrame(paintLobbyPickers);
+  }
+  function paintLobbyPickers() {
+    E.lobbySw.paint();
+    if (E.lobbyHats) { E.lobbyHats.paint(S.myColor); }
   }
   function setPanelTab(t) {
     S.panelTab = t;
@@ -8216,7 +9357,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     E.tabSettings.setAttribute('aria-selected', t === 'settings' ? 'true' : 'false');
     show(E.secPlayers, t === 'players');
     show(E.secSettings, t === 'settings');
-    if (t === 'players') requestAnimationFrame(function () { E.lobbySw.paint(); });
+    if (t === 'players') requestAnimationFrame(paintLobbyPickers);
   }
   function selectText(el) {
     try { var r = document.createRange(); r.selectNodeContents(el); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch (e) { /* ignore */ }
@@ -8267,8 +9408,16 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       sfx('click');
       S.myColor = i; S.color = i; lsSet('ss_color', i);
       if (S.lobbyTaken) E.lobbySw.set(i, S.lobbyTaken);
+      E.lobbyHats.paint(i);
       fire('onColor', i);
     });
+    E.lobbyHats = makeHatPicker(function (i) {
+      sfx('click');
+      setMyHat(i);
+      fire('onHat', S.hat);
+      if (S.lobby) updateLobby(S.lobby);
+    });
+    E.lobbyHatCur = h('span.hat-cur', { text: hatName(S.hat) });
     E.tabPlayers = h('button.panel-tab', { type: 'button', role: 'tab', text: 'Players' });
     E.tabSettings = h('button.panel-tab', { type: 'button', role: 'tab', text: 'Settings' });
     E.tabPlayers.addEventListener('click', function () { setPanelTab('players'); });
@@ -8276,7 +9425,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     E.plHead = h('span.field-label', { text: 'Crew (1/10)' });
     E.secPlayers = h('div', null, [
       h('div.panel-sec', null, [E.plHead, E.plist]),
-      h('div.panel-sec', null, [h('span.field-label', { text: 'Your colour' }), E.lobbySw.el])
+      h('div.panel-sec', null, [h('span.field-label', { text: 'Your colour' }), E.lobbySw.el]),
+      HATS() ? h('div.panel-sec.hat-sec', null, [h('span.field-label', null, ['Your hat', E.lobbyHatCur]), E.lobbyHats.el]) : null
     ]);
     E.setNote = h('p.set-note', { text: 'Only the host can change these settings.' });
     E.secSettings = h('div', null, [buildSettings(), E.setNote]);
@@ -8305,29 +9455,46 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!E.lobby) return;
     var players = d.players || [];
     var me = null;
+    var recentHat = Date.now() - S.hatAt < 1500;
     for (var i = 0; i < players.length; i++) if (players[i].isMe) me = players[i];
-    if (me) S.myColor = me.color;
+    if (me) {
+      if (S.myColor !== me.color && E.lobbyHats) E.lobbyHats.paint(me.color);
+      S.myColor = me.color;
+      // my own hat: show the local choice right away (presence round-trip lags a little)
+      if (recentHat || me.hat == null) players = players.map(function (p) { return p.isMe ? Object.assign({}, p, { hat: S.hat }) : p; });
+    }
+    if (E.lobbyHats) E.lobbyHats.set(S.hat);
     txt(E.codeVal, d.code || '----');
     var st = fullSettings(d.settings);
     var mode = st.free ? 'free' : (d.mode || S.mode || 'room');
     E.modeChip.className = 'mode-chip ' + mode;
     txt(E.modeTxt, mode === 'free' ? 'Freeplay' : mode === 'local' ? 'Local (this browser)' : 'Online');
 
-    var psig = JSON.stringify(players);
+    // rebuild rows only when something other than the talking state changes
+    var psig = JSON.stringify(players.map(function (p) { return [p.slot, p.name, p.color, cleanHat(p.hat), !!p.isMe, !!p.isHost]; }));
     if (psig !== S.lobbySigs.players) {
       S.lobbySigs.players = psig;
       E.plist.textContent = '';
+      E.plRows = [];
+      var top = listTop(players);
       players.forEach(function (p) {
         var li = h('li' + (p.isMe ? '.me' : ''), null, [
-          crewCanvas(40, p.color, {}),
+          h('span.av', null, [avatarCanvas(44, 50, p.color, { hat: cleanHat(p.hat), top: top }), spkBadge()]),
           h('span.pn', null, [p.name || 'Player', p.isMe ? h('small', { text: '(you)' }) : null]),
           p.isHost ? h('span.crown', { title: 'Host', html: ICON.crown }) : null
         ]);
+        E.plRows.push(li);
         E.plist.appendChild(li);
       });
       txt(E.pcount, String(players.length));
       txt(E.plHead, 'Crew (' + players.length + '/' + maxPlayers() + ')');
     }
+    players.forEach(function (p, k) {
+      var li = E.plRows && E.plRows[k];
+      if (!li) return;
+      var on = !!p.speaking;
+      if (li.classList.contains('speaking') !== on) li.classList.toggle('speaking', on);
+    });
     var taken = {};
     players.forEach(function (p) { if (!p.isMe) taken[p.color] = true; });
     S.lobbyTaken = taken;
@@ -8808,13 +9975,13 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     E.mGrid.textContent = '';
     S.cards = {};
     players.forEach(function (p) {
-      var crew = crewCanvas(52, p.color, {}, 'm-crew');
+      var crew = h('canvas.crew-cv.m-crew', { 'aria-hidden': 'true' });
       var name = h('span.m-name', { text: p.name || 'Player' });
       var votes = h('div.m-votes');
       var yes = h('button.yes', { type: 'button', 'aria-label': 'Vote ' + (p.name || 'player'), html: ICON.check });
       var no = h('button.no', { type: 'button', 'aria-label': 'Cancel', html: ICON.cross });
       var card = h('div.m-card', { role: 'listitem', tabindex: '-1' }, [
-        crew,
+        h('span.m-av', null, [crew, spkBadge()]),
         h('span.xmark', { html: ICON.xmark }),
         h('div.m-info', null, [name, votes]),
         h('div.m-badges', null, [h('span.b-voted', { text: 'I voted' }), h('span.b-caller', { title: 'Called the meeting', html: ICON.megaphone })]),
@@ -8862,6 +10029,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var byColor = d.by ? colorKey(d.by) : -99;
     var res = d.phase === 'result';
     var votes = d.votes || {};
+    var top = listTop(d.players);
     (d.players || []).forEach(function (p) {
       var c = S.cards[p.slot];
       if (!c) return;
@@ -8875,8 +10043,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       el.classList.toggle('sel', vote && S.selected === p.slot);
       el.setAttribute('tabindex', vote && p.alive ? '0' : '-1');
       txt(c.name, p.name || 'Player');
-      var csig = p.color + '|' + (p.alive ? 1 : 0);
-      if (c.crewSig !== csig) { c.crewSig = csig; paintCrew(c.crew, 52, p.color, {}); }
+      el.classList.toggle('speaking', !!p.speaking);
+      var hat = cleanHat(p.hat);
+      var csig = p.color + '|' + (p.alive ? 1 : 0) + '|' + hat + '|' + top;
+      if (c.crewSig !== csig) { c.crewSig = csig; paintAvatar(c.crew, 52, 52, p.color, { hat: hat, top: top }); }
       voterIcons(c.votes, res ? votes[String(p.slot)] : null, c);
     });
     // skip
@@ -8914,12 +10084,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!w || !hh) return;
     var ctx = sizeCanvas(cv, w, hh);
     ctx.clearRect(0, 0, w, hh);
-    var sc = Math.min(hh / 64, 3.2);
+    var sc = Math.min(hh / (64 + (-58 - hatTop(d.by && d.by.hat))), 3.2);
     if (d.body) {
-      drawCrew(ctx, w * 0.33, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1 });
+      drawCrew(ctx, w * 0.33, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1, hat: d.by ? cleanHat(d.by.hat) : 0 });
       drawCrew(ctx, w * 0.72, hh * 0.97, d.body.color, { scale: sc * 0.95, facing: -1, dead: true });
     } else {
-      drawCrew(ctx, w * 0.5, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1 });
+      drawCrew(ctx, w * 0.5, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1, hat: d.by ? cleanHat(d.by.hat) : 0 });
     }
   }
   function showMeeting(d) {
@@ -8998,15 +10168,15 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
           E.roleSub.appendChild(h('span.c', { text: p.name || 'Player' }));
         });
       } else E.roleSub.textContent = 'Sabotage and kill everyone.';
-      people = (d.impostors || []).map(function (p) { return { color: p.color, name: p.name, isMe: (p.color | 0) === myColor }; });
-      if (!people.some(function (p) { return p.isMe; })) people.push({ color: myColor, name: S.name, isMe: true });
+      people = (d.impostors || []).map(function (p) { return { color: p.color, name: p.name, hat: p.hat, isMe: (p.color | 0) === myColor }; });
+      if (!people.some(function (p) { return p.isMe; })) people.push({ color: myColor, name: S.name, hat: S.hat, isMe: true });
     } else {
       E.roleSub.appendChild(document.createTextNode('There ' + (count === 1 ? 'is ' : 'are ')));
       E.roleSub.appendChild(h('b', { text: count + ' Impostor' + (count === 1 ? '' : 's') }));
       E.roleSub.appendChild(document.createTextNode(' among us'));
       var lp = (d.players) || (S.lobby && S.lobby.players) || [];
-      people = lp.map(function (p) { return { color: p.color, name: p.name, isMe: !!p.isMe }; });
-      if (!people.length) people = [{ color: myColor, name: S.name, isMe: true }];
+      people = lp.map(function (p) { return { color: p.color, name: p.name, hat: p.hat, isMe: !!p.isMe }; });
+      if (!people.length) people = [{ color: myColor, name: S.name, hat: S.hat, isMe: true }];
     }
     E.role.classList.add('on');
     var paint = function () { drawLineup(E.roleCv, people, { names: true }); };
@@ -9026,7 +10196,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     d = d || {};
     var text = String(d.text || (d.name ? d.name + ' was ejected.' : 'No one was ejected.'));
     var lines = text.split('\n');
-    S.eject = { t: 0, color: (d.color != null && d.color >= 0 && d.name) ? d.color : -1, main: lines[0], sub: lines.slice(1).join('\n'), shown: -1, rot: Math.random() * 6 };
+    S.eject = { t: 0, color: (d.color != null && d.color >= 0 && d.name) ? d.color : -1, hat: cleanHat(d.hat), main: lines[0], sub: lines.slice(1).join('\n'), shown: -1, rot: Math.random() * 6 };
     E.ejectTxt.textContent = '';
     E.eject.classList.add('on');
     later('eject', 6000, hideEjection);
@@ -9045,7 +10215,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       var x = -80 + (w + 160) * p, y = hh * 0.4 + Math.sin(ej.t * 1.3) * 16;
       var sc = clamp(Math.min(w, hh) / 300, 1.1, 2.2);
       ctx.save(); ctx.translate(x, y); ctx.rotate(ej.rot + ej.t * 1.6);
-      drawCrew(ctx, 0, 28 * sc, ej.color, { scale: sc, facing: 1, noShadow: true });
+      drawCrew(ctx, 0, 28 * sc, ej.color, { scale: sc, facing: 1, noShadow: true, hat: ej.hat });
       ctx.restore();
     }
     // typewriter
@@ -9092,7 +10262,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (REASONS[w][r]) r = REASONS[w][r];
     txt(E.overReason, r);
     var winners = (d.players || []).filter(function (p) { return (w === 'imp') === isImp(p.role); })
-      .map(function (p) { return { color: p.color, name: p.name, ghost: p.alive === false || p.alive === 0, isMe: (p.color | 0) === S.myColor || !!p.isMe }; });
+      .map(function (p) { return { color: p.color, name: p.name, hat: p.hat, ghost: p.alive === false || p.alive === 0, isMe: (p.color | 0) === S.myColor || !!p.isMe }; });
     show(E.againBtn, !!d.isHost);
     show(E.overWait, !d.isHost);
     E.over.classList.add('on');
@@ -9140,12 +10310,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (name === 'menu') {
       hideOverlays(); hideMeeting();
       clearTimer('menuBusy'); S.menuBusy = false; syncMenuButtons();
-      requestAnimationFrame(function () { E.menuSw.paint(); paintHero(); });
+      requestAnimationFrame(function () { E.menuSw.paint(); paintHero(); if (E.menuHats) { E.menuHats.paint(S.color); E.menuHats.reveal(); } });
     } else if (name === 'lobby') {
       hideOver(); hideEjection(); hideRole(); showSabotageMenu(false);
       S.hudSigs = {};
       if (S.panelOpen == null) setPanelOpen(window.innerWidth > 640);
-      else requestAnimationFrame(function () { E.lobbySw.paint(); });
+      else requestAnimationFrame(paintLobbyPickers);
     } else if (name === 'game') {
       hideOver();
       show(E.exitPop, false);
@@ -9185,7 +10355,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     for (var k in S.redraw) if (S.redraw[k]) S.redraw[k]();
     if (S.mapOpen) layoutMap();
     if (E.menuSw) E.menuSw.paint();
-    if (E.lobbySw && S.panelOpen) E.lobbySw.paint();
+    if (E.lobbySw && S.panelOpen) paintLobbyPickers();
+    if (E.menuHats && S.screen === 'menu') E.menuHats.paint(S.color);
     if (S.screen === 'menu') paintHero();
   }
 
@@ -9198,11 +10369,13 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var c = parseInt(lsGet('ss_color', ''), 10);
     S.color = (c >= 0 && c < COLORS().length) ? c : (Math.random() * COLORS().length) | 0;
     S.myColor = S.color;
+    S.hat = cleanHat(lsGet('ss_hat', '0'));
     var storedMute = lsGet('ss_muted', null);
     S.muted = storedMute != null ? storedMute === '1' : !!(IS.audio && IS.audio.muted);
     S.tasksCollapsed = window.innerWidth <= 640 || window.innerHeight <= 520;
     try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) S.touch = true; } catch (e) { /* ignore */ }
 
+    injectCss();
     var root = document.getElementById('ui-layer');
     if (!root) { root = h('div#ui-layer'); document.body.appendChild(root); }
     root.textContent = '';
@@ -9219,6 +10392,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     E.toasts = h('div.toasts', { 'aria-live': 'polite' });
     root.appendChild(E.toasts);
     E.menuSw.set(S.color, null);
+    setMyHat(S.hat); S.hatAt = 0;
     if (S.touch) document.body.classList.add('is-touch');
     if (S.muted) fire('onMute', true);
     syncMute();
@@ -9243,7 +10417,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       if (b) setTimeout(function () { if (document.activeElement === b) b.blur(); }, 0);
     }, true);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { onResize(); }).catch(function () { /* ignore */ });
-    requestAnimationFrame(function () { paintHero(); E.menuSw.paint(); });
+    requestAnimationFrame(function () { paintHero(); E.menuSw.paint(); if (E.menuHats) { E.menuHats.paint(S.color); E.menuHats.reveal(); } });
     requestAnimationFrame(loop);
   }
 
@@ -9268,14 +10442,488 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     setMapView: setMapView,
     getStick: function () { return { x: S.stick.x, y: S.stick.y }; },
     isTyping: isTyping,
-    profile: function () { return { name: currentName(), color: S.color }; },
+    profile: function () { return { name: currentName(), color: S.color, hat: S.hat }; },
+    hat: function () { return S.hat; },
     _state: S
   };
 })();
 
 </script>
 <script>/* js/voice.js */
-/* placeholder: being written */
+/* Starship Sus — proximity voice chat for the self-hosted build. See SPEC.md §7.
+ * Runs on the game room's LiveKit connection (IS.lkTransport.livekitRoom('ss-<code>')):
+ *   - a small floating widget (mic toggle + push-to-talk switch; hold T or the mic button to talk);
+ *   - every remote audio track goes MediaStreamSource -> Gain -> StereoPanner -> destination,
+ *     with gain/pan recomputed every frame from update(view) (distance, line of sight, vents,
+ *     ghosts, meetings) and smoothed with setTargetAtTime. LiveKit never attaches its own
+ *     <audio> elements (we never call track.attach()), so nothing plays twice;
+ *   - isSpeaking(peer) from LiveKit's active-speaker flags, only for players I can hear.
+ * Completely inert when window.SS_LIVEKIT is unset (the claude.ai build): no DOM, no listeners.
+ */
+(function () {
+  'use strict';
+  var IS = (window.IS = window.IS || {});
+
+  function noop() {}
+  function falsy() { return false; }
+
+  // ------------------------------------------------------------------ pure mixing rules
+  // target(view, peer, opts) -> {g: 0..1, p: -1..1}. opts: {near, far, los(x0,y0,x1,y1)->bool}
+  function target(view, peer, opts) {
+    var OFF = { g: 0, p: 0 };
+    if (!view || !view.inGame || !view.me) return OFF;
+    var me = view.me, ph = view.phase, sp = null, i;
+    var list = view.players || [];
+    for (i = 0; i < list.length; i++) if (list[i] && list[i].peer === peer) { sp = list[i]; break; }
+    if (sp && sp.isMe) return OFF;
+    if (sp && sp.conn === false) return OFF;
+    var meGhost = !!(me.spectator || !me.alive);
+    var spGhost = !sp || !sp.alive; // peers without a slot (spectators) count as ghosts
+    if (ph === 'lobby' || ph === 'over') return { g: 1, p: 0 };
+    if (ph === 'meeting' || ph === 'eject') return { g: spGhost && !meGhost ? 0 : 1, p: 0 };
+    // play (and the role reveal before it): proximity
+    var near = (opts && opts.near) || 96, far = Math.max((opts && opts.far) || 300, near + 1);
+    var pan = 0, d = Infinity;
+    if (sp && isFinite(sp.x) && isFinite(sp.y) && isFinite(me.x) && isFinite(me.y)) {
+      var dx = sp.x - me.x, dy = sp.y - me.y;
+      d = Math.sqrt(dx * dx + dy * dy);
+      pan = Math.max(-1, Math.min(1, dx / far)) * 0.7;
+    }
+    if (spGhost) return meGhost ? { g: 1, p: pan } : OFF; // only ghosts hear ghosts
+    if (sp.inVent) return OFF;                            // impostors in vents are silent
+    if (meGhost) return { g: 1, p: pan };                 // ghosts hear everyone
+    if (!(d < far)) return OFF;
+    var los = opts && opts.los;
+    if (los && !los(me.x, me.y - 20, sp.x, sp.y - 20)) return OFF;
+    if (d <= near) return { g: 1, p: pan };
+    var t = (d - near) / (far - near);
+    return { g: 1 - t * t * (3 - 2 * t), p: pan };
+  }
+
+  if (!window.SS_LIVEKIT) {
+    IS.voice = { update: noop, isSpeaking: falsy, active: falsy, _target: target };
+    return;
+  }
+
+  var LS_PTT = 'starship-sus/voice-ptt';
+  var SMOOTH = 0.07; // s, gain time constant
+  var AUDIO_OPTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+  var S = {
+    room: null, name: null, handlers: [],
+    ctx: null, remotes: new Map(), // identity -> {track, stream, el, src, gain, pan, tg, tp}
+    micWanted: false, micOn: false, micBusy: false, micErr: false,
+    ptt: false, keyHeld: false, ptrHeld: false,
+    dock: null, btn: null, mode: null, lastUi: ''
+  };
+  try { S.ptt = window.localStorage.getItem(LS_PTT) === '1'; } catch (e) { /* ignore */ }
+
+  function LK() { return window.LivekitClient || {}; }
+  function ev(n) { var E = LK().RoomEvent; return (E && E[n]) || n.charAt(0).toLowerCase() + n.slice(1); }
+  function enabled() { return !!(IS.net && IS.net.mode === 'livekit' && IS.lkTransport && IS.lkTransport.livekitRoom); }
+  function toast(t) { if (IS.ui && IS.ui.toast) IS.ui.toast(t); }
+  function isTouch() { return !!(document.body && document.body.classList.contains('is-touch')); }
+
+  // ------------------------------------------------------------------ audio graph
+  function ensureCtx() {
+    if (S.ctx) return S.ctx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try { S.ctx = new AC(); } catch (e) { S.ctx = null; }
+    return S.ctx;
+  }
+  function resume() {
+    if (!enabled()) return;
+    var c = ensureCtx();
+    if (c && c.state === 'suspended' && c.resume) c.resume().catch(noop);
+  }
+  ['pointerdown', 'keydown', 'touchend'].forEach(function (t) { window.addEventListener(t, resume, true); });
+
+  function addRemote(peer, track) {
+    if (!peer || !track || !track.mediaStreamTrack) return;
+    var old = S.remotes.get(peer);
+    if (old && old.track === track) return;
+    if (old) removeRemote(peer);
+    var R = { track: track, stream: null, el: null, src: null, gain: null, pan: null, tg: -1, tp: 0 };
+    var c = ensureCtx();
+    try {
+      R.stream = new MediaStream([track.mediaStreamTrack]);
+      if (c) {
+        // Chromium only feeds remote WebRTC audio into WebAudio while a media element plays the
+        // stream, so keep a muted, detached <audio> for it (it makes no sound itself).
+        R.el = document.createElement('audio');
+        R.el.muted = true;
+        R.el.srcObject = R.stream;
+        var pp = R.el.play();
+        if (pp && pp.catch) pp.catch(noop);
+        R.src = c.createMediaStreamSource(R.stream);
+        R.gain = c.createGain();
+        R.gain.gain.value = 0;
+        R.src.connect(R.gain);
+        if (c.createStereoPanner) { R.pan = c.createStereoPanner(); R.gain.connect(R.pan); R.pan.connect(c.destination); }
+        else R.gain.connect(c.destination);
+      } else {
+        // no WebAudio: plain element, volume only
+        R.el = document.createElement('audio');
+        R.el.autoplay = true;
+        R.el.volume = 0;
+        R.el.srcObject = R.stream;
+        var p2 = R.el.play();
+        if (p2 && p2.catch) p2.catch(noop);
+      }
+    } catch (e) {
+      if (typeof console !== 'undefined') console.warn('voice: cannot route audio for', peer, e);
+    }
+    S.remotes.set(peer, R);
+  }
+  function removeRemote(peer) {
+    var R = S.remotes.get(peer);
+    if (!R) return;
+    S.remotes.delete(peer);
+    try { if (R.src) R.src.disconnect(); } catch (e) { /* ignore */ }
+    try { if (R.gain) R.gain.disconnect(); } catch (e) { /* ignore */ }
+    try { if (R.pan) R.pan.disconnect(); } catch (e) { /* ignore */ }
+    try { if (R.el) { R.el.pause(); R.el.srcObject = null; } } catch (e) { /* ignore */ }
+  }
+
+  function settingsFar() {
+    var C = IS.CONFIG || {};
+    var st = null;
+    try { var s = IS.client && IS.client.state && IS.client.state(); st = s && s.hs && s.hs.st; } catch (e) { st = null; }
+    var cvis = st && typeof st.cvis === 'number' && st.cvis > 0 ? st.cvis : 1;
+    return (C.VISION || 300) * cvis;
+  }
+  function los(x0, y0, x1, y1) {
+    var m = IS.map;
+    if (!m || typeof m.lineOfSight !== 'function') return true;
+    try { return !!m.lineOfSight(x0, y0, x1, y1); } catch (e) { return true; }
+  }
+
+  function mix(view) {
+    var near = ((IS.CONFIG && IS.CONFIG.TILE) || 48) * 2;
+    var opts = { near: near, far: Math.max(settingsFar(), near + 48), los: los };
+    var c = S.ctx, now = c ? c.currentTime : 0;
+    S.remotes.forEach(function (R, peer) {
+      var t = target(view, peer, opts);
+      if (Math.abs(t.g - R.tg) > 0.004) {
+        if (R.gain) {
+          if (R.tg < 0) R.gain.gain.value = t.g; else R.gain.gain.setTargetAtTime(t.g, now, SMOOTH);
+        } else if (R.el) R.el.volume = Math.max(0, Math.min(1, t.g));
+        R.tg = t.g;
+      }
+      if (R.pan && Math.abs(t.p - R.tp) > 0.01) { R.pan.pan.setTargetAtTime(t.p, now, SMOOTH); R.tp = t.p; }
+    });
+  }
+
+  // ------------------------------------------------------------------ room attach / detach
+  function on(room, name, fn) {
+    var e = ev(name);
+    try { room.on(e, fn); S.handlers.push([e, fn]); } catch (x) { /* ignore */ }
+  }
+  function eachAudioPub(p, fn) {
+    var pubs = p && (p.audioTrackPublications || p.trackPublications);
+    if (!pubs || typeof pubs.forEach !== 'function') return;
+    pubs.forEach(function (pub) { if (pub && pub.kind === 'audio' && pub.track) fn(pub); });
+  }
+  function attach(room, name) {
+    S.room = room; S.name = name; S.micOn = false; S.micBusy = false; S.micErr = false;
+    ensureCtx();
+    on(room, 'TrackSubscribed', function (track, pub, participant) {
+      if (S.room === room && track && track.kind === 'audio' && participant) addRemote(participant.identity, track);
+    });
+    on(room, 'TrackUnsubscribed', function (track, pub, participant) {
+      if (S.room !== room || !participant) return;
+      var R = S.remotes.get(participant.identity);
+      if (R && R.track === track) removeRemote(participant.identity);
+    });
+    on(room, 'ParticipantDisconnected', function (participant) {
+      if (S.room === room && participant) removeRemote(participant.identity);
+    });
+    try {
+      room.remoteParticipants.forEach(function (p) {
+        eachAudioPub(p, function (pub) { addRemote(p.identity, pub.track); });
+      });
+    } catch (e) { /* ignore */ }
+    showDock(true);
+    applyMic(); // re-enable the mic if it was on in the previous game
+  }
+  function detach() {
+    var room = S.room;
+    if (!room) return;
+    for (var i = 0; i < S.handlers.length; i++) { try { room.off(S.handlers[i][0], S.handlers[i][1]); } catch (e) { /* ignore */ } }
+    S.handlers = [];
+    Array.from(S.remotes.keys()).forEach(removeRemote);
+    if (S.micOn) {
+      try {
+        var lp = room.localParticipant;
+        var p = lp && lp.setMicrophoneEnabled(false);
+        if (p && p.catch) p.catch(noop);
+      } catch (e) { /* ignore */ }
+    }
+    S.room = null; S.name = null; S.micOn = false; S.micBusy = false;
+    S.keyHeld = false; S.ptrHeld = false;
+    showDock(false);
+  }
+
+  // ------------------------------------------------------------------ microphone
+  function desiredMic() { return !!S.room && (S.ptt ? (S.keyHeld || S.ptrHeld) : S.micWanted); }
+  function micError(e) {
+    var n = (e && e.name) || '';
+    var msg;
+    if (typeof window.isSecureContext === 'boolean' && !window.isSecureContext) msg = 'Voice chat needs HTTPS (or localhost) to use your microphone.';
+    else if (n === 'NotAllowedError' || n === 'SecurityError' || /permission|denied/i.test((e && e.message) || '')) msg = 'Microphone blocked. Allow mic access for this site in your browser to talk.';
+    else if (n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError') msg = 'No microphone found. Plug one in to talk.';
+    else if (n === 'NotReadableError' || n === 'TrackStartError') msg = 'Your microphone is busy in another app.';
+    else msg = "Couldn't start your microphone.";
+    toast(msg);
+  }
+  function applyMic() {
+    renderDock();
+    var room = S.room;
+    if (!room || S.micBusy) return;
+    var want = desiredMic();
+    if (want === S.micOn) return;
+    var lp = room.localParticipant;
+    if (!lp || typeof lp.setMicrophoneEnabled !== 'function') return;
+    if (want && !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      micError({ name: 'SecurityError' });
+      S.micWanted = false; S.keyHeld = false; S.ptrHeld = false; S.micErr = true;
+      renderDock();
+      return;
+    }
+    S.micBusy = true;
+    renderDock();
+    var p;
+    try { p = Promise.resolve(lp.setMicrophoneEnabled(want, AUDIO_OPTS)); } catch (e) { p = Promise.reject(e); }
+    p.then(function () {
+      if (S.room === room) { S.micOn = want; if (want) S.micErr = false; }
+    }, function (e) {
+      if (S.room !== room) return;
+      if (want) {
+        micError(e);
+        S.micWanted = false; S.keyHeld = false; S.ptrHeld = false; S.micErr = true;
+      }
+    }).then(function () {
+      if (S.room !== room) return;
+      S.micBusy = false;
+      applyMic();
+    });
+  }
+  function setPtt(on) {
+    S.ptt = !!on;
+    try { window.localStorage.setItem(LS_PTT, S.ptt ? '1' : '0'); } catch (e) { /* ignore */ }
+    S.keyHeld = false; S.ptrHeld = false;
+    if (!S.ptt) S.micWanted = false;
+    toast(S.ptt ? (isTouch() ? 'Push-to-talk: hold the mic button to talk' : 'Push-to-talk: hold T (or the mic button) to talk') : 'Open mic: tap the mic button to talk');
+    applyMic();
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code !== 'KeyT' || !S.room || !S.ptt || e.repeat) return;
+    if (IS.ui && IS.ui.isTyping && IS.ui.isTyping()) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    S.keyHeld = true; applyMic();
+  });
+  window.addEventListener('keyup', function (e) {
+    if (e.code !== 'KeyT' || !S.keyHeld) return;
+    S.keyHeld = false; applyMic();
+  });
+  window.addEventListener('blur', function () {
+    if (S.keyHeld || S.ptrHeld) { S.keyHeld = false; S.ptrHeld = false; applyMic(); }
+  });
+
+  // ------------------------------------------------------------------ widget
+  var CSS = [
+    '.vc-dock{position:fixed;left:calc(env(safe-area-inset-left,0px) + 12px);bottom:calc(env(safe-area-inset-bottom,0px) + 12px);z-index:55;',
+    'display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:auto;touch-action:none;-webkit-user-select:none;user-select:none;',
+    "font-family:'Russo One',system-ui,sans-serif}",
+    'body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 68px);bottom:calc(env(safe-area-inset-bottom,0px) + 172px)}',
+    '@media (max-height:520px){body.is-touch .vc-dock{left:calc(env(safe-area-inset-left,0px) + 172px);bottom:calc(env(safe-area-inset-bottom,0px) + 20px)}}',
+    '.vc-dock[hidden]{display:none}',
+    '.vc-mic{position:relative;width:52px;height:52px;border-radius:50%;border:3px solid #050814;cursor:pointer;display:grid;place-items:center;padding:0;',
+    'background:radial-gradient(circle at 50% 30%,#3a4468,#151c33 75%);color:#9aa3c7;box-shadow:0 4px 0 #050814,inset 0 -4px 0 rgba(0,0,0,.35);',
+    'transition:transform .08s,box-shadow .15s,background .15s;touch-action:none;-webkit-tap-highlight-color:transparent}',
+    '.vc-mic svg{width:26px;height:26px;filter:drop-shadow(0 2px 0 rgba(0,0,0,.55))}',
+    '.vc-mic:hover{filter:brightness(1.12)}',
+    '.vc-mic:active{transform:translateY(3px);box-shadow:0 1px 0 #050814,inset 0 -2px 0 rgba(0,0,0,.35)}',
+    '.vc-mic:focus-visible,.vc-mode:focus-visible{outline:3px solid #ffcc33;outline-offset:2px}',
+    '.vc-dock.vc-on .vc-mic{background:radial-gradient(circle at 50% 30%,#4af08f,#15924a 80%);color:#04260f}',
+    '.vc-dock.vc-ptt .vc-mic{background:radial-gradient(circle at 50% 30%,#ffd95a,#b88a00 80%);color:#2a1b00}',
+    '.vc-dock.vc-ptt.vc-on .vc-mic{background:radial-gradient(circle at 50% 30%,#4af08f,#15924a 80%);color:#04260f}',
+    '.vc-dock.vc-err .vc-mic{background:radial-gradient(circle at 50% 30%,#ff6b77,#a5121f 80%);color:#2b0005}',
+    '.vc-dock.vc-busy .vc-mic{opacity:.7;cursor:progress}',
+    '.vc-dock.vc-talk .vc-mic{box-shadow:0 4px 0 #050814,0 0 0 4px rgba(74,240,143,.55),0 0 18px 4px rgba(74,240,143,.55)}',
+    '.vc-mode{min-width:52px;height:22px;padding:0 7px;border-radius:999px;border:2px solid #050814;background:#151c33;color:#9aa3c7;cursor:pointer;',
+    "font:700 11px/1 'Russo One',system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;box-shadow:0 2px 0 #050814;touch-action:manipulation}",
+    '.vc-dock.vc-ptt .vc-mode{background:#ffcc33;color:#2a1b00}',
+    '.vc-tip{position:absolute;left:calc(100% + 8px);bottom:14px;white-space:nowrap;padding:4px 8px;border-radius:8px;background:rgba(5,8,20,.85);',
+    'color:#e8ecff;font:400 12px/1.2 Rubik,system-ui,sans-serif;pointer-events:none;opacity:0;transition:opacity .15s}',
+    '.vc-dock:hover .vc-tip{opacity:1}',
+    'body.is-touch .vc-tip{display:none}',
+    '.vc-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}'
+  ].join('\n');
+  var ICON_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+  var ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 9.5V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.9 2.3M5 11a7 7 0 0 0 11.4 5.4M19 11a7 7 0 0 1-.6 2.8M12 18v3M3 3l18 18"/></svg>';
+
+  function buildDock() {
+    if (S.dock) return;
+    var st = document.createElement('style');
+    st.id = 'vc-style';
+    st.textContent = CSS;
+    document.head.appendChild(st);
+    var d = document.createElement('div');
+    d.className = 'vc-dock';
+    d.hidden = true;
+    d.setAttribute('role', 'group');
+    d.setAttribute('aria-label', 'Voice chat');
+    d.innerHTML = '<button type="button" class="vc-mode" aria-pressed="false"></button>' +
+      '<button type="button" class="vc-mic" aria-pressed="false"></button><span class="vc-tip" aria-hidden="true"></span>' +
+      '<span class="vc-sr" aria-live="polite"></span>';
+    document.body.appendChild(d);
+    S.dock = d;
+    S.mode = d.querySelector('.vc-mode');
+    S.btn = d.querySelector('.vc-mic');
+    S.tip = d.querySelector('.vc-tip');
+    S.live = d.querySelector('.vc-sr');
+    S.mode.addEventListener('click', function () { setPtt(!S.ptt); });
+    S.btn.addEventListener('click', function () {
+      if (S.ptt) return;
+      S.micWanted = !S.micWanted;
+      applyMic();
+    });
+    S.btn.addEventListener('pointerdown', function (e) {
+      resume();
+      if (!S.ptt) return;
+      e.preventDefault();
+      try { S.btn.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+      S.ptrHeld = true; applyMic();
+    });
+    var up = function () { if (S.ptrHeld) { S.ptrHeld = false; applyMic(); } };
+    S.btn.addEventListener('pointerup', up);
+    S.btn.addEventListener('pointercancel', up);
+    S.btn.addEventListener('lostpointercapture', up);
+    S.btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // keyboard users: Space/Enter on the focused mic button acts like a hold in PTT mode
+    S.btn.addEventListener('keydown', function (e) {
+      if (!S.ptt || (e.key !== ' ' && e.key !== 'Enter') || e.repeat) return;
+      e.preventDefault(); S.ptrHeld = true; applyMic();
+    });
+    S.btn.addEventListener('keyup', function (e) {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); up(); }
+    });
+  }
+  function showDock(on) {
+    if (on) buildDock();
+    if (S.dock) S.dock.hidden = !on;
+    S.lastUi = '';
+    renderDock();
+  }
+  function renderDock() {
+    if (!S.dock || S.dock.hidden) return;
+    var talking = S.micOn && localSpeaking();
+    var touch = isTouch();
+    var key = [S.ptt, S.micOn, S.micBusy, S.micErr, talking, touch].join();
+    if (key === S.lastUi) return;
+    S.lastUi = key;
+    var d = S.dock;
+    d.classList.toggle('vc-on', S.micOn);
+    d.classList.toggle('vc-ptt', S.ptt);
+    d.classList.toggle('vc-busy', S.micBusy);
+    d.classList.toggle('vc-err', S.micErr && !S.micOn);
+    d.classList.toggle('vc-talk', talking);
+    S.btn.innerHTML = S.micOn ? ICON_ON : ICON_OFF;
+    var label;
+    if (S.ptt) label = S.micOn ? 'Talking…' : (touch ? 'Hold to talk' : 'Hold T to talk');
+    else label = S.micOn ? 'Mic on: click to mute' : 'Mic off: click to talk';
+    if (S.micBusy && !S.micOn) label = 'Starting microphone…';
+    S.btn.setAttribute('aria-label', label);
+    S.btn.setAttribute('aria-pressed', S.micOn ? 'true' : 'false');
+    S.btn.title = label;
+    S.tip.textContent = label;
+    S.mode.textContent = S.ptt ? 'PTT' : 'Open';
+    S.mode.setAttribute('aria-pressed', S.ptt ? 'true' : 'false');
+    S.mode.setAttribute('aria-label', S.ptt ? 'Push-to-talk is on. Switch to open mic' : 'Open mic. Switch to push-to-talk');
+    S.mode.title = S.ptt ? 'Push-to-talk (hold T). Click for open mic' : 'Open mic. Click for push-to-talk';
+    S.live.textContent = S.micOn ? 'Microphone on' : 'Microphone off';
+  }
+
+  // ------------------------------------------------------------------ speaking
+  function participant(peer) {
+    var r = S.room;
+    if (!r || !peer) return null;
+    if (r.localParticipant && r.localParticipant.identity === peer) return r.localParticipant;
+    var rp = r.remoteParticipants;
+    if (!rp) return null;
+    if (typeof rp.get === 'function') { var p = rp.get(peer); if (p) return p; }
+    var found = null;
+    if (typeof rp.forEach === 'function') rp.forEach(function (x) { if (x && x.identity === peer) found = x; });
+    return found;
+  }
+  function localSpeaking() {
+    var lp = S.room && S.room.localParticipant;
+    return !!(lp && lp.isSpeaking);
+  }
+  function isSpeaking(peer) {
+    if (!S.room || !peer) return false;
+    var p = participant(peer);
+    if (!p || !p.isSpeaking) return false;
+    if (p === S.room.localParticipant) return S.micOn;
+    var R = S.remotes.get(peer);
+    return !!(R && R.tg > 0.05); // never reveal voices this player cannot hear
+  }
+
+  // ------------------------------------------------------------------ per-frame entry point
+  function update(view) {
+    var room = null, name = null;
+    if (enabled() && view && view.inGame && typeof view.code === 'string' && view.code) {
+      name = ((IS.CONFIG && IS.CONFIG.ROOM_PREFIX) || 'ss-') + view.code.toLowerCase();
+      room = IS.lkTransport.livekitRoom(name);
+    }
+    if (room !== S.room) {
+      detach();
+      if (room) attach(room, name);
+    }
+    if (!S.room) return;
+    mix(view);
+    renderDock();
+  }
+
+  IS.voice = {
+    update: update,
+    isSpeaking: isSpeaking,
+    active: function () { return !!S.room; },
+    micOn: function () { return S.micOn; },
+    setMic: function (on) { S.micWanted = !!on; applyMic(); },
+    setPushToTalk: setPtt,
+    _target: target,
+    _debug: function () {
+      var out = {};
+      S.remotes.forEach(function (R, peer) {
+        out[peer] = { target: R.tg, pan: R.tp, gain: R.gain ? R.gain.gain.value : (R.el ? R.el.volume : 0), webaudio: !!R.gain };
+      });
+      return { room: S.name, ctx: S.ctx ? S.ctx.state : null, micOn: S.micOn, ptt: S.ptt, remotes: out };
+    },
+    // Diagnostics: peak level (0..1) of a remote voice before and after its gain node over `ms`.
+    _probe: function (peer, ms) {
+      var R = S.remotes.get(peer), c = S.ctx;
+      if (!R || !R.src || !c) return Promise.resolve(null);
+      var a = c.createAnalyser(), b = c.createAnalyser();
+      a.fftSize = b.fftSize = 2048;
+      R.src.connect(a); R.gain.connect(b);
+      var buf = new Float32Array(2048), pre = 0, post = 0;
+      return new Promise(function (resolve) {
+        var t0 = Date.now();
+        (function poll() {
+          a.getFloatTimeDomainData(buf); for (var i = 0; i < buf.length; i++) pre = Math.max(pre, Math.abs(buf[i]));
+          b.getFloatTimeDomainData(buf); for (i = 0; i < buf.length; i++) post = Math.max(post, Math.abs(buf[i]));
+          if (Date.now() - t0 < (ms || 1500)) { setTimeout(poll, 20); return; }
+          try { R.src.disconnect(a); R.gain.disconnect(b); } catch (e) { /* ignore */ }
+          resolve({ pre: pre, post: post });
+        })();
+      });
+    }
+  };
+})();
 
 </script>
 <script>/* js/main.js */

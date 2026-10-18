@@ -1,5 +1,6 @@
-/* Starship Sus — transport. See SPEC.md §3.
- * IS.net normalises the claude.ai artifact `room` capability (presence only) and a
+/* Starship Sus — transport. See SPEC.md §3 and §7.
+ * IS.net normalises the claude.ai artifact `room` capability (presence only), LiveKit rooms
+ * (self-hosted build only: window.SS_LIVEKIT + IS.lkTransport, mode 'livekit') and a
  * BroadcastChannel emulation with the same semantics (several tabs of one browser).
  * Without BroadcastChannel the mode is 'offline': rooms only contain yourself (freeplay).
  */
@@ -331,6 +332,16 @@
     });
   }
 
+  var LK_LOBBY = 'ss-lobby';
+  function lkUsable() {
+    return !!(window.SS_LIVEKIT && IS.lkTransport && typeof IS.lkTransport.available === 'function' && IS.lkTransport.available());
+  }
+  function useLocal() {
+    net.mode = typeof BroadcastChannel === 'function' ? 'local' : 'offline';
+    learnPeer(rid(12));
+    net.lobby = localJoin('__lobby__');
+  }
+
   function init() {
     if (initP) return initP;
     initP = tryRoom().then(function (r) {
@@ -340,10 +351,21 @@
         net.lobby = wrapRoom(r, true);
         try { net.lobby.onPeers(function () { net.lobby.peers(); }); } catch (e) { /* ignore */ }
         net.lobby.peers();
-      } else {
-        net.mode = typeof BroadcastChannel === 'function' ? 'local' : 'offline';
+      } else if (lkUsable()) {
+        // Self-hosted build: LiveKit rooms; the BroadcastChannel emulation is the fallback when
+        // the LiveKit server (or the token endpoint) can't be reached.
         learnPeer(rid(12));
-        net.lobby = localJoin('__lobby__');
+        return IS.lkTransport.join(LK_LOBBY, net.myPeer, { lobby: true }).then(function (lobby) {
+          net.mode = 'livekit';
+          net.lobby = lobby;
+          return { mode: net.mode };
+        }, function (e) {
+          if (typeof console !== 'undefined') console.warn('LiveKit unavailable, falling back to local play:', e && e.message);
+          useLocal();
+          return { mode: net.mode };
+        });
+      } else {
+        useLocal();
       }
       return { mode: net.mode };
     });
@@ -353,6 +375,7 @@
   function join(name) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) return Promise.reject(err('invalid_argument', 'bad room name'));
     return init().then(function () {
+      if (net.mode === 'livekit') return IS.lkTransport.join(name, net.myPeer);
       if (net.mode !== 'room') return localJoin(name);
       if (wrapped[name]) return wrapped[name];
       if (typeof rawRoom.join !== 'function') throw err('not_permitted', 'named rooms unavailable');

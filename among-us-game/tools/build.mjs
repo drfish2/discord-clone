@@ -2,7 +2,11 @@
 //   node tools/build.mjs
 // Writes dist/index.html (standalone document) and dist/artifact.html (body fragment for the
 // claude.ai Artifact publisher, which wraps the page in its own doctype/head/body skeleton).
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
+//   node tools/build.mjs --selfhost [--out=<file>] [--token-url=<url>]
+// Writes the self-hosted build (SPEC.md §7) instead: the standalone document plus the vendored
+// livekit-client UMD and window.SS_LIVEKIT = {tokenUrl}, by default to the Discord clone's
+// public/among-us/index.html (served by the Next.js app at /among-us).
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,6 +51,29 @@ const inlined = html.replace(/<script\s+src="([^"]+)"\s*><\/script>/g, (m, src) 
 });
 if (!injectedAssets) throw new Error('assets.js script tag not found in index.html');
 
+const kb = (n) => (n / 1024).toFixed(0) + ' KB';
+const args = process.argv.slice(2);
+const arg = (name) => { const a = args.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : null; };
+
+if (args.includes('--selfhost')) {
+  const lkFile = join(root, 'vendor', 'livekit-client.umd.js');
+  if (!existsSync(lkFile)) throw new Error('vendor/livekit-client.umd.js is missing');
+  const lk = readFileSync(lkFile, 'utf8').replace(/\n?\/\/# sourceMappingURL=\S*\s*$/, '\n');
+  const cfg = { tokenUrl: arg('token-url') || '/api/among-us/token' };
+  const marker = inlined.indexOf('<script>/* js/');
+  if (marker < 0) throw new Error('game scripts not found');
+  const pre = `<script>/* livekit-client (Apache-2.0, see livekit-client.LICENSE.txt) */\n${safe(lk)}\n</script>\n` +
+    `<script>window.SS_LIVEKIT=${JSON.stringify(cfg).replace(/</g, '\\u003c')};</script>\n`;
+  // before the first game script (js/config.js), so window.LivekitClient exists when they load
+  const page = inlined.slice(0, marker) + pre + inlined.slice(marker);
+  const out = arg('out') || join(root, '..', 'public', 'among-us', 'index.html');
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, page);
+  copyFileSync(join(root, 'vendor', 'livekit-client.LICENSE'), join(dirname(out), 'livekit-client.LICENSE.txt'));
+  console.log(`selfhost: ${relative(process.cwd(), out) || out} ${kb(Buffer.byteLength(page))} (livekit-client ${kb(Buffer.byteLength(lk))})`);
+  process.exit(0);
+}
+
 mkdirSync(join(root, 'dist'), { recursive: true });
 writeFileSync(join(root, 'dist', 'index.html'), inlined);
 
@@ -63,6 +90,5 @@ const restHead = headKeep.replace(title, '').trim();
 const fragment = `${title}\n${restHead}\n${body.trim()}\n`;
 writeFileSync(join(root, 'dist', 'artifact.html'), fragment);
 
-const kb = (n) => (n / 1024).toFixed(0) + ' KB';
 console.log(`assets ${Object.keys(assetUrls).length} files, ${kb(assetBytes)} raw`);
 console.log(`dist/index.html ${kb(Buffer.byteLength(inlined))}, dist/artifact.html ${kb(Buffer.byteLength(fragment))}`);

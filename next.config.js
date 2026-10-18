@@ -8,6 +8,10 @@ const nextConfig = {
 
     return config;
   },
+  // Starship Sus self-hosted build (among-us-game, `node tools/build.mjs --selfhost`)
+  async rewrites() {
+    return [{ source: "/among-us", destination: "/among-us/index.html" }];
+  },
   images: {
     domains: [
       "uploadthing.com",
