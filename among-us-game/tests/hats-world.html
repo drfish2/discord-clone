@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Hats world</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style></head>
+<body><canvas id="c"></canvas>
+<script src="../js/config.js"></script>
+<script src="../js/hats.js"></script>
+<script src="../js/map.js"></script>
+<script src="../js/render.js"></script>
+<script>
+// World renderer with hats: walking (cached sprite frames), ghosts, animated hats drawn live, bodies, talking.
+IS.render.init(document.getElementById('c'));
+var b = IS.map.button, T = +(new URLSearchParams(location.search).get('t') || 1.3);
+function view(t) {
+  var P = function (slot, dx, dy, color, hat, o) { return Object.assign({ slot: slot, peer: 'p' + slot, x: b.x + dx, y: b.y + dy, f: 1, m: 0, color: color, hat: hat, alive: true, name: 'P' + slot + ' ' + IS.HATS[hat].name, ghost: false, inVent: false, isMe: slot === 0 }, o || {}); };
+  return {
+    me: { x: b.x, y: b.y + 120, slot: 0, alive: false, role: 0, color: 0 }, cam: { x: b.x, y: b.y + 110 }, zoom: 1.6,
+    players: [
+      P(0, -150, 70, 3, 12, { m: 1, walk: (t * 2.3) % 1 }),
+      P(1, -50, 70, 0, 5, { f: -1, m: 1, speaking: true }),
+      P(2, 50, 70, 1, 7, { speaking: true }),                    // halo: animated, drawn live over the sprite
+      P(3, 150, 70, 5, 25, { m: 1 }),                             // propeller: animated + walking
+      P(4, -150, 190, 7, 3, { ghost: true, alive: false }),        // ghost, sprite hat
+      P(5, -50, 190, 10, 18, { ghost: true, alive: false, f: -1 }),// ghost, animated hat
+      P(6, 50, 190, 8, 24, { f: -1 }),
+      P(7, 150, 190, 4, 1, { role: 1 })
+    ],
+    bodies: [{ slot: 9, x: b.x + 250, y: b.y + 150, color: 2 }],
+    vision: Infinity, lights: false, highlight: null, taskTargets: [], sabotageTargets: [], showNames: true, time: t, phase: 'play'
+  };
+}
+window.draw = function (t) { IS.render.frame(view(t)); };
+for (var i = 0; i < 30; i++) draw(T + i / 60);   // let the static-layer scale settle
+window.ready = true;
+</script></body></html>

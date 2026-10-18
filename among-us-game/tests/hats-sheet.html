@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hats contact sheet</title>
+<style>
+  body{margin:0;background:#1b2340;color:#e8ecff;font:13px system-ui,sans-serif}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script src="../js/config.js"></script>
+<script src="../js/hats.js"></script>
+<script src="../js/render.js"></script>
+<script>
+// ?mode=overview (all hats, big) | ?mode=detail&from=1&to=8 (variants per hat)
+var q = new URLSearchParams(location.search);
+var mode = q.get('mode') || 'overview';
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+var N = IS.HATS.length, T0 = 1.3;
+function grid(w, h) { cv.width = w; cv.height = h; ctx.fillStyle = '#1b2340'; ctx.fillRect(0, 0, w, h); }
+function label(t, x, y, al) { ctx.fillStyle = '#e8ecff'; ctx.font = '600 13px system-ui'; ctx.textAlign = al || 'center'; ctx.fillText(t, x, y); }
+function guide(x, y, s) { // head-top guide line (y=-58) to judge seating
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x - 40 * s, y - 58 * s); ctx.lineTo(x + 40 * s, y - 58 * s); ctx.stroke();
+}
+if (mode === 'zoom') {
+  var list = (q.get('hats') || '6,8,13,16').split(',').map(Number), sz = +(q.get('scale') || 4);
+  grid(list.length * 300, 420);
+  list.forEach(function (hi, k) {
+    var x = k * 300 + 150, y = 390;
+    guide(x, y, sz);
+    IS.render.drawCrewmate(ctx, x, y, [0, 1, 6, 7][k % 4], { facing: 1, scale: sz, hat: hi, time: T0 });
+    label(hi + ' ' + IS.HATS[hi].name, x, 20);
+  });
+} else if (mode === 'overview') {
+  var cols = +(q.get('cols') || 7), cw = 170, ch = 230, s = +(q.get('scale') || 2);
+  grid(cols * cw, Math.ceil(N / cols) * ch);
+  for (var i = 0; i < N; i++) {
+    var x = (i % cols) * cw + cw / 2, y = Math.floor(i / cols) * ch + ch - 34;
+    ctx.fillStyle = (i % 2) ? '#222b4d' : '#252f55'; ctx.fillRect((i % cols) * cw, Math.floor(i / cols) * ch, cw, ch);
+    IS.render.drawCrewmate(ctx, x, y, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11][i % 12], { facing: 1, scale: s, hat: i, time: T0 });
+    label(i + ' ' + IS.HATS[i].name, x, y + 24);
+  }
+} else {
+  var from = +(q.get('from') || 1), to = Math.min(N - 1, +(q.get('to') || 8));
+  var V = [
+    ['red R', 0, { facing: 1 }],
+    ['blue L', 1, { facing: -1 }],
+    ['walk .25', 5, { facing: 1, walk: 0.25 }],
+    ['walk .6 L', 6, { facing: -1, walk: 0.6 }],
+    ['white', 7, { facing: 1, walk: 0.85 }],
+    ['ghost', 11, { facing: 1, ghost: true }],
+    ['ghost L', 3, { facing: -1, ghost: true }],
+    ['dead', 4, { facing: 1, dead: true }],
+    ['small', 10, { facing: 1, scale: 0.6 }],
+    ['tiny L', 8, { facing: -1, scale: 0.4 }]
+  ];
+  var cw2 = 120, ch2 = 150, s2 = 1.4;
+  grid(130 + V.length * cw2, (to - from + 1) * ch2);
+  for (var hIdx = from; hIdx <= to; hIdx++) {
+    var r = hIdx - from, yy = r * ch2 + ch2 - 18;
+    ctx.fillStyle = (r % 2) ? '#222b4d' : '#283259'; ctx.fillRect(0, r * ch2, cv.width, ch2);
+    label(hIdx + ' ' + IS.HATS[hIdx].name, 8, r * ch2 + 20, 'left');
+    V.forEach(function (v, j) {
+      var x = 130 + j * cw2 + cw2 / 2, o = Object.assign({ scale: s2, hat: hIdx, time: T0 }, v[2]);
+      if (v[2].scale) o.scale = v[2].scale * s2;
+      if (j === 0) guide(x, yy, s2);
+      IS.render.drawCrewmate(ctx, x, yy, v[1], o);
+      if (r === 0) label(v[0], x, 14);
+    });
+  }
+}
+window.ready = true;
+</script>
+</body>
+</html>

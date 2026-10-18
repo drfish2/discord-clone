@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Hats UI harness</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;700&display=swap">
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+<div id="ui-layer"></div>
+<div id="task-layer"></div>
+<script>
+// Loads the real page CSS + config/hats/render/ui (no main.js) so overlays can be driven directly.
+window.calls = [];
+function loadScript(src) { return new Promise(function (res) { var s = document.createElement('script'); s.src = src; s.onload = function () { res(true); }; s.onerror = function () { res(false); }; document.body.appendChild(s); }); }
+window.harnessReady = (async function () {
+  var html = await (await fetch('../index.html')).text();
+  var m = html.match(/<style>([\s\S]*?)<\/style>/);
+  var st = document.createElement('style'); st.textContent = m ? m[1] : ''; document.head.appendChild(st);
+  for (const f of ['config', 'hats', 'map', 'render', 'ui']) await loadScript('../js/' + f + '.js');
+  var handlers = {};
+  ['onCreate','onJoin','onFreeplay','onStart','onSettings','onColor','onHat','onLeave','onAgain','onUse','onReport','onKill','onSabotage','onVent','onMap','onVote','onChat','onEmergency','onMute']
+    .forEach(function (n) { handlers[n] = function (a) { window.calls.push([n, a === undefined ? null : JSON.parse(JSON.stringify(a))]); }; });
+  IS.ui.init(handlers);
+  IS.ui.showScreen('menu');
+  return true;
+})();
+var NAMES = ['Muneeb', 'Astro42', 'Nova', 'Pixel', 'Comet', 'Zappy', 'Blip', 'Luna', 'Rover', 'Quasar'];
+var COLS = [3, 0, 1, 5, 10, 8, 4, 7, 11, 2], HATSX = [12, 5, 24, 7, 0, 1, 21, 9, 18, 3];
+window.people = function (n) {
+  var a = [];
+  for (var i = 0; i < n; i++) a.push({ slot: i, name: NAMES[i], color: COLS[i], hat: HATSX[i], isMe: i === 0, isHost: i === 0, alive: i !== 4, role: i === 2 || i === 5 ? 1 : 0, voted: i % 3 === 1, canVote: true, speaking: i === 1 || i === 6 });
+  return a;
+};
+</script>
+</body>
+</html>

@@ -25,6 +25,12 @@
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function nowMs() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
+  // hats (IS.HATS / IS.hats from hats.js; everything degrades to "no hat" when missing)
+  function HATS() { return (IS.HATS && IS.HATS.length) ? IS.HATS : null; }
+  function hatCount() { return HATS() ? HATS().length : 1; }
+  function cleanHat(i) { i = parseInt(i, 10) | 0; return i > 0 && i < hatCount() ? i : 0; }
+  function hatName(i) { var L = HATS(); return L && L[cleanHat(i)] ? L[cleanHat(i)].name : 'No hat'; }
+  function hatTop(i) { i = cleanHat(i); return i && IS.hats && IS.hats.top ? Math.min(-58, IS.hats.top(i)) : -58; }
   function lsGet(k, d) { try { var v = window.localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, String(v)); } catch (e) { /* storage unavailable */ } }
 
@@ -101,7 +107,7 @@
   var E = {};
   var S = {
     inited: false, screen: null, mode: null,
-    name: '', color: 0, myColor: 0, muted: false, touch: false,
+    name: '', color: 0, myColor: 0, hat: 0, hatAt: 0, muted: false, touch: false,
     games: [], lobby: null, lobbySigs: {}, panelOpen: null, panelTab: 'players', localSet: null, localSetAt: 0,
     hud: null, hudSigs: {}, tasksCollapsed: false,
     meeting: null, meetingOpen: false, cards: {}, cardsSig: '', selected: null, pendingVote: null, meetDeadline: 0,
@@ -201,6 +207,25 @@
     var s = size / 70;
     drawCrew(ctx, size / 2 + (o && o.dead ? 0 : -1 * s), size * 0.9, ci, Object.assign({ scale: s, facing: 1, noShadow: size < 30 }, o || {}));
   }
+  // Crewmate avatar framed to fit hats: crew-space y from `top` (default: this hat's top) to the feet.
+  function paintAvatar(cv, w, hh, ci, o) {
+    o = o || {};
+    var ctx = sizeCanvas(cv, w, hh);
+    ctx.clearRect(0, 0, w, hh);
+    var top = Math.min(-61, o.top != null ? o.top : hatTop(o.hat)) - 3, bot = 5;
+    var s = Math.min(hh / (bot - top), w / 60, o.maxScale || 99);
+    var d = Object.assign({ scale: s, facing: 1, noShadow: w < 30 }, o);
+    delete d.top; delete d.maxScale;
+    drawCrew(ctx, w / 2 - s, hh - bot * s, ci, d);
+  }
+  function avatarCanvas(w, hh, ci, o, cls) {
+    var cv = h('canvas.crew-cv' + (cls ? '.' + cls : ''), { 'aria-hidden': 'true' });
+    cv.style.width = w + 'px'; cv.style.height = hh + 'px';
+    paintAvatar(cv, w, hh, ci, o);
+    return cv;
+  }
+  // shared framing for a list of people so every avatar in it has the same scale
+  function listTop(list) { var t = -58; (list || []).forEach(function (p) { t = Math.min(t, hatTop(p && p.hat)); }); return t; }
   function crewCanvas(size, ci, o, cls) {
     var cv = h('canvas.crew-cv' + (cls ? '.' + cls : ''), { 'aria-hidden': 'true' });
     cv.style.width = size + 'px'; cv.style.height = size + 'px';
@@ -209,9 +234,10 @@
   }
 
   // Lineup of crewmates (role reveal, game over). people: [{color,name,isMe,ghost}]
-  function lineupBase(n, w, hAvail, nameSpace) {
+  function lineupBase(n, w, hAvail, nameSpace, head) {
     var spanK = Math.max(0, n - 1);
-    return Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
+    head = head || 64;
+    return Math.min((hAvail - nameSpace - 10) / head, 3, (w - 24) / (46 * spanK + 60), hAvail / (165 * head / 64));
   }
   function drawLineup(cv, people, o) {
     o = o || {};
@@ -223,7 +249,8 @@
     if (!n) return;
     var arr = people.slice().sort(function (a, b) { return (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0); });
     var nameSpace = o.names ? 26 : 6;
-    var single = lineupBase(n, w, hh, nameSpace);
+    o = Object.assign({}, o, { head: 64 + (-58 - listTop(people)) });
+    var single = lineupBase(n, w, hh, nameSpace, o.head);
     if (n > 4 && single < 1.35 && hh > 240) {
       // two rows: back row (higher, slightly dimmer) then front row with me in the middle
       var nf = Math.ceil(n / 2);
@@ -244,7 +271,8 @@
     slots.forEach(function (s) { minK = Math.min(minK, s.k); maxK = Math.max(maxK, s.k); });
     var spanK = maxK - minK;
     // fit height, and fit width: total extent = spanK*spacing + ~56*base, with spacing = 46*base
-    var base = Math.min((hAvail - nameSpace - 10) / 64, 3, (w - 24) / (46 * spanK + 60), hAvail / 165);
+    var head = o.head || 64;
+    var base = Math.min((hAvail - nameSpace - 10) / head, 3, (w - 24) / (46 * spanK + 60), hAvail / (165 * head / 64));
     var spacing = base * 46;
     var shift = -(minK + maxK) / 2 * spacing;
     slots.sort(function (a, b) { return Math.abs(b.k) - Math.abs(a.k); });
@@ -254,7 +282,7 @@
       var x = w / 2 + shift + sl.k * spacing, y = feetY - ak * base * 3;
       ctx.save();
       try { ctx.filter = 'brightness(' + (1 - dim - 0.07 * ak).toFixed(2) + ')'; } catch (e) { /* unsupported */ }
-      drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost });
+      drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost, hat: cleanHat(sl.p.hat) });
       ctx.restore();
       if (o.names && sl.p.name) {
         var fs = clamp(Math.round(Math.min(sc * 6, spacing * 0.26)), 9, 18);
@@ -303,13 +331,13 @@
     if (o.floaters) {
       this.nextFl -= dt;
       if (!this.fl && this.nextFl <= 0) {
-        this.fl = { x: -0.08, y: 0.15 + Math.random() * 0.6, vx: 0.022 + Math.random() * 0.015, vy: (Math.random() - 0.5) * 0.01, r: 0, vr: 0.5 + Math.random() * 0.6, c: (Math.random() * COLORS().length) | 0, s: 0.55 + Math.random() * 0.35 };
+        this.fl = { x: -0.08, y: 0.15 + Math.random() * 0.6, vx: 0.022 + Math.random() * 0.015, vy: (Math.random() - 0.5) * 0.01, r: 0, vr: 0.5 + Math.random() * 0.6, c: (Math.random() * COLORS().length) | 0, s: 0.55 + Math.random() * 0.35, hat: Math.random() < 0.75 ? cleanHat(1 + Math.random() * (hatCount() - 1)) : 0 };
       }
       if (this.fl) {
         var f = this.fl;
         f.x += f.vx * dt; f.y += f.vy * dt; f.r += f.vr * dt;
         ctx.save(); ctx.translate(f.x * w, f.y * hh); ctx.rotate(f.r); ctx.globalAlpha = 0.85;
-        drawCrew(ctx, 0, 28 * f.s, f.c, { scale: f.s, facing: 1, noShadow: true });
+        drawCrew(ctx, 0, 28 * f.s, f.c, { scale: f.s, facing: 1, noShadow: true, hat: f.hat });
         ctx.restore();
         if (f.x > 1.1) { this.fl = null; this.nextFl = 10 + Math.random() * 8; }
       }
@@ -370,6 +398,87 @@
     return api;
   }
 
+  // ------------------------------------------------------------------ hat picker
+  // Grid of mini crewmates (in the given colour) wearing every hat. Hats are not exclusive.
+  var HAT_TOP = -99, HAT_BOT = -24;   // bust framing shared by every button: hat + head + upper body
+  function makeHatPicker(onPick, cls) {
+    var wrap = h('div.hat-grid' + (cls ? '.' + cls : ''), { role: 'group', 'aria-label': 'Hat' });
+    var btns = [];
+    var L = HATS() || [];
+    L.forEach(function (hat, i) {
+      var b = h('button.hat-btn', { type: 'button', title: hat.name, 'aria-label': hat.name, 'aria-pressed': 'false' });
+      var cv = h('canvas', { 'aria-hidden': 'true' });
+      b.appendChild(cv);
+      b.addEventListener('click', function () { onPick(i); });
+      btns.push({ b: b, cv: cv, drawn: '' });
+      wrap.appendChild(b);
+    });
+    var api = {
+      el: wrap, sel: -1, color: 0,
+      set: function (sel) {
+        sel = cleanHat(sel);
+        if (api.sel === sel) return;
+        api.sel = sel;
+        btns.forEach(function (o, i) { o.b.setAttribute('aria-pressed', i === sel ? 'true' : 'false'); });
+      },
+      reveal: function () {   // keep the selected hat in view inside a scrolling grid
+        var o = btns[api.sel];
+        if (!o || wrap.scrollHeight <= wrap.clientHeight + 2) return;
+        var top = o.b.offsetTop - wrap.offsetTop, bh = o.b.offsetHeight;
+        if (top < wrap.scrollTop || top + bh > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = Math.max(0, top - (wrap.clientHeight - bh) / 2);
+      },
+      paint: function (color) {
+        if (color != null) api.color = color | 0;
+        btns.forEach(function (o, i) {
+          var w = o.b.clientWidth, hh = o.b.clientHeight;
+          if (!w || !hh) return;
+          var key = w + 'x' + hh + '|' + api.color;
+          if (o.drawn === key) return;
+          o.drawn = key;
+          o.cv.style.width = w + 'px'; o.cv.style.height = hh + 'px';
+          var ctx = sizeCanvas(o.cv, w, hh);
+          ctx.clearRect(0, 0, w, hh);
+          var sc = Math.min((hh - 4) / (HAT_BOT - HAT_TOP), w / 62);
+          drawCrew(ctx, w / 2 - sc * 1.5, hh - 2 - HAT_BOT * sc, api.color, { scale: sc, facing: 1, noShadow: true, hat: i, time: 1.3 });
+        });
+      }
+    };
+    return api;
+  }
+  function injectCss() {
+    if (document.getElementById('ui-hats-css')) return;
+    var css = [
+      '.hat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px}',
+      '.hat-grid.scroll{max-height:124px;overflow-y:auto;overflow-x:hidden;padding:4px 6px 4px 4px;margin:-4px -6px -4px -4px;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}',
+      '.hat-btn{position:relative;aspect-ratio:1;min-width:0;padding:0;border:3px solid var(--outline);border-radius:12px;cursor:pointer;',
+      '  background:radial-gradient(circle at 50% 30%,#2c3a6e,#141b36);box-shadow:0 3px 0 var(--outline);transition:transform .1s, box-shadow .1s;',
+      '  display:block;overflow:hidden;pointer-events:auto}',
+      '.hat-btn canvas{display:block;width:100%;height:100%}',
+      '.hat-btn:hover{transform:translateY(-2px)}',
+      '.hat-btn[aria-pressed="true"]{box-shadow:0 0 0 3px var(--amber), 0 3px 0 var(--outline);background:radial-gradient(circle at 50% 30%,#55497a,#241b40)}',
+      '.hat-btn:first-child::after{content:"";position:absolute;right:4px;top:4px;width:12px;height:12px;border-radius:50%;border:2px solid var(--ink-3);',
+      '  background:linear-gradient(135deg,transparent 43%,var(--ink-3) 43%,var(--ink-3) 57%,transparent 57%)}',
+      '.field-label .hat-cur{margin-left:8px;font:500 13px var(--font-body);letter-spacing:0;text-transform:none;color:var(--amber)}',
+      /* talking indicators */
+      '.plist .av{position:relative;flex:none;display:block;border-radius:12px;transition:box-shadow .15s, background .15s}',
+      '.plist .av canvas{display:block}',
+      '.spk{position:absolute;right:-7px;bottom:-6px;width:21px;height:21px;border-radius:50%;background:var(--green);color:#002611;',
+      '  border:2px solid var(--outline);display:none;place-items:center;pointer-events:none;z-index:2}',
+      '.spk svg{width:13px;height:13px}',
+      '.speaking > .spk,.speaking .av > .spk,.speaking .m-av > .spk{display:grid;animation:spkPulse .7s ease-in-out infinite alternate}',
+      '.plist li.speaking .av,.m-card.speaking .m-crew{box-shadow:0 0 0 3px var(--green), 0 0 14px 4px rgba(62,224,122,.6);background:rgba(62,224,122,.16)}',
+      '.plist li.speaking{border-color:rgba(62,224,122,.55)}',
+      '.m-av{position:relative;flex:none;display:block}',
+      '.m-av .spk{right:-6px;bottom:-4px}',
+      '@keyframes spkPulse{from{transform:scale(.92)}to{transform:scale(1.12)}}',
+      '@media (prefers-reduced-motion:reduce){.speaking > .spk,.speaking .av > .spk,.speaking .m-av > .spk{animation:none}}'
+    ].join('\n');
+    var st = document.createElement('style');
+    st.id = 'ui-hats-css'; st.textContent = css;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function spkBadge() { return h('span.spk', { 'aria-hidden': 'true', html: ICON.soundOn }); }
+
   // ------------------------------------------------------------------ mute
   var muteBtns = [];
   function makeMuteBtn(cls) {
@@ -423,19 +532,33 @@
     if (E.codeIn) E.codeIn.disabled = off;
     if (E.freeBtn) { E.freeBtn.disabled = !!S.menuBusy; E.freeBtn.classList.toggle('ui-btn--dark', !off); }
   }
-  function doHost() { if (E.hostBtn.disabled) return; sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onCreate', { name: n, color: S.color }); }
+  function doHost() { if (E.hostBtn.disabled) return; sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onCreate', { name: n, color: S.color, hat: S.hat }); }
   function doJoin(code) {
     code = filterCode(code != null ? code : E.codeIn.value);
     if (code.length !== 4) { toast('Enter the 4-letter game code'); E.codeIn.focus(); return; }
     if (S.mode === 'offline') { toast('Offline — only Freeplay is available'); return; }
     sfx('click'); unlockAudio();
     var n = currentName(); menuBusy();
-    fire('onJoin', { code: code, name: n, color: S.color });
+    fire('onJoin', { code: code, name: n, color: S.color, hat: S.hat });
   }
-  function doFree() { sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onFreeplay', { name: n, color: S.color }); }
+  function doFree() { sfx('click'); unlockAudio(); var n = currentName(); menuBusy(); fire('onFreeplay', { name: n, color: S.color, hat: S.hat }); }
   function pickMenuColor(i) {
     S.color = i; S.myColor = i; lsSet('ss_color', i);
     E.menuSw.set(i, null);
+    paintHero();
+    if (E.menuHats) E.menuHats.paint(i);
+    sfx('click');
+  }
+  function setMyHat(i) {
+    S.hat = cleanHat(i); S.hatAt = Date.now();
+    lsSet('ss_hat', S.hat);
+    if (E.menuHats) E.menuHats.set(S.hat);
+    if (E.lobbyHats) E.lobbyHats.set(S.hat);
+    txt(E.menuHatCur, hatName(S.hat));
+    txt(E.lobbyHatCur, hatName(S.hat));
+  }
+  function pickMenuHat(i) {
+    setMyHat(i);
     paintHero();
     sfx('click');
   }
@@ -444,7 +567,8 @@
     var sz = E.heroCv.clientWidth || 190;
     var ctx = sizeCanvas(E.heroCv, sz, sz);
     ctx.clearRect(0, 0, sz, sz);
-    drawCrew(ctx, sz * 0.5, sz * 0.9, S.color, { scale: sz / 72, facing: 1 });
+    var top = hatTop(S.hat) - 3, s = Math.min(sz / 72, sz / (6 - top));
+    drawCrew(ctx, sz * 0.5, Math.min(sz * 0.9, sz - 6 * s), S.color, { scale: s, facing: 1, hat: S.hat });
   }
   function makeHowto(cls) {
     return h('section.ui-card.howto' + (cls ? '.' + cls : ''), { 'aria-label': 'How to play' }, [
@@ -489,6 +613,8 @@
     E.nameIn.addEventListener('input', function () { var v = cleanName(E.nameIn.value); if (v) { S.name = v; lsSet('ss_name', v); } });
     E.nameIn.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') E.nameIn.blur(); });
     E.menuSw = makeSwatches(pickMenuColor);
+    E.menuHats = makeHatPicker(pickMenuHat, 'scroll');
+    E.menuHatCur = h('span.hat-cur', { text: hatName(S.hat) });
     E.hostBtn = h('button.ui-btn.ui-btn--big.ui-btn--block', { type: 'button', html: ICON.rocket + '<span>Host Game</span>' });
     E.hostBtn.addEventListener('click', doHost);
     E.codeIn = h('input.ui-input', { type: 'text', placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Game code', enterkeyhint: 'go', inputmode: 'text' });
@@ -508,6 +634,7 @@
     var main = h('section.ui-card.menu-main', { 'aria-label': 'Play' }, [
       h('div', null, [h('label.field-label', { for: 'ui-name', text: 'Your name' }), E.nameIn]),
       h('div', null, [h('span.field-label', { text: 'Colour' }), E.menuSw.el]),
+      HATS() ? h('div.hat-sec', null, [h('span.field-label', null, ['Hat', E.menuHatCur]), E.menuHats.el]) : null,
       E.hostBtn,
       h('div', null, [h('span.field-label', { text: 'Have a code?' }), h('div.join-row', null, [E.codeIn, E.joinBtn])]),
       h('div.or-sep', { text: 'OR' }),
@@ -661,7 +788,11 @@
     S.panelOpen = !!open;
     E.lpanel.classList.toggle('closed', !S.panelOpen);
     E.panelBtn.setAttribute('aria-expanded', S.panelOpen ? 'true' : 'false');
-    if (S.panelOpen) requestAnimationFrame(function () { E.lobbySw.paint(); });
+    if (S.panelOpen) requestAnimationFrame(paintLobbyPickers);
+  }
+  function paintLobbyPickers() {
+    E.lobbySw.paint();
+    if (E.lobbyHats) { E.lobbyHats.paint(S.myColor); }
   }
   function setPanelTab(t) {
     S.panelTab = t;
@@ -669,7 +800,7 @@
     E.tabSettings.setAttribute('aria-selected', t === 'settings' ? 'true' : 'false');
     show(E.secPlayers, t === 'players');
     show(E.secSettings, t === 'settings');
-    if (t === 'players') requestAnimationFrame(function () { E.lobbySw.paint(); });
+    if (t === 'players') requestAnimationFrame(paintLobbyPickers);
   }
   function selectText(el) {
     try { var r = document.createRange(); r.selectNodeContents(el); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch (e) { /* ignore */ }
@@ -720,8 +851,16 @@
       sfx('click');
       S.myColor = i; S.color = i; lsSet('ss_color', i);
       if (S.lobbyTaken) E.lobbySw.set(i, S.lobbyTaken);
+      E.lobbyHats.paint(i);
       fire('onColor', i);
     });
+    E.lobbyHats = makeHatPicker(function (i) {
+      sfx('click');
+      setMyHat(i);
+      fire('onHat', S.hat);
+      if (S.lobby) updateLobby(S.lobby);
+    });
+    E.lobbyHatCur = h('span.hat-cur', { text: hatName(S.hat) });
     E.tabPlayers = h('button.panel-tab', { type: 'button', role: 'tab', text: 'Players' });
     E.tabSettings = h('button.panel-tab', { type: 'button', role: 'tab', text: 'Settings' });
     E.tabPlayers.addEventListener('click', function () { setPanelTab('players'); });
@@ -729,7 +868,8 @@
     E.plHead = h('span.field-label', { text: 'Crew (1/10)' });
     E.secPlayers = h('div', null, [
       h('div.panel-sec', null, [E.plHead, E.plist]),
-      h('div.panel-sec', null, [h('span.field-label', { text: 'Your colour' }), E.lobbySw.el])
+      h('div.panel-sec', null, [h('span.field-label', { text: 'Your colour' }), E.lobbySw.el]),
+      HATS() ? h('div.panel-sec.hat-sec', null, [h('span.field-label', null, ['Your hat', E.lobbyHatCur]), E.lobbyHats.el]) : null
     ]);
     E.setNote = h('p.set-note', { text: 'Only the host can change these settings.' });
     E.secSettings = h('div', null, [buildSettings(), E.setNote]);
@@ -758,29 +898,46 @@
     if (!E.lobby) return;
     var players = d.players || [];
     var me = null;
+    var recentHat = Date.now() - S.hatAt < 1500;
     for (var i = 0; i < players.length; i++) if (players[i].isMe) me = players[i];
-    if (me) S.myColor = me.color;
+    if (me) {
+      if (S.myColor !== me.color && E.lobbyHats) E.lobbyHats.paint(me.color);
+      S.myColor = me.color;
+      // my own hat: show the local choice right away (presence round-trip lags a little)
+      if (recentHat || me.hat == null) players = players.map(function (p) { return p.isMe ? Object.assign({}, p, { hat: S.hat }) : p; });
+    }
+    if (E.lobbyHats) E.lobbyHats.set(S.hat);
     txt(E.codeVal, d.code || '----');
     var st = fullSettings(d.settings);
     var mode = st.free ? 'free' : (d.mode || S.mode || 'room');
     E.modeChip.className = 'mode-chip ' + mode;
     txt(E.modeTxt, mode === 'free' ? 'Freeplay' : mode === 'local' ? 'Local (this browser)' : 'Online');
 
-    var psig = JSON.stringify(players);
+    // rebuild rows only when something other than the talking state changes
+    var psig = JSON.stringify(players.map(function (p) { return [p.slot, p.name, p.color, cleanHat(p.hat), !!p.isMe, !!p.isHost]; }));
     if (psig !== S.lobbySigs.players) {
       S.lobbySigs.players = psig;
       E.plist.textContent = '';
+      E.plRows = [];
+      var top = listTop(players);
       players.forEach(function (p) {
         var li = h('li' + (p.isMe ? '.me' : ''), null, [
-          crewCanvas(40, p.color, {}),
+          h('span.av', null, [avatarCanvas(44, 50, p.color, { hat: cleanHat(p.hat), top: top }), spkBadge()]),
           h('span.pn', null, [p.name || 'Player', p.isMe ? h('small', { text: '(you)' }) : null]),
           p.isHost ? h('span.crown', { title: 'Host', html: ICON.crown }) : null
         ]);
+        E.plRows.push(li);
         E.plist.appendChild(li);
       });
       txt(E.pcount, String(players.length));
       txt(E.plHead, 'Crew (' + players.length + '/' + maxPlayers() + ')');
     }
+    players.forEach(function (p, k) {
+      var li = E.plRows && E.plRows[k];
+      if (!li) return;
+      var on = !!p.speaking;
+      if (li.classList.contains('speaking') !== on) li.classList.toggle('speaking', on);
+    });
     var taken = {};
     players.forEach(function (p) { if (!p.isMe) taken[p.color] = true; });
     S.lobbyTaken = taken;
@@ -1261,13 +1418,13 @@
     E.mGrid.textContent = '';
     S.cards = {};
     players.forEach(function (p) {
-      var crew = crewCanvas(52, p.color, {}, 'm-crew');
+      var crew = h('canvas.crew-cv.m-crew', { 'aria-hidden': 'true' });
       var name = h('span.m-name', { text: p.name || 'Player' });
       var votes = h('div.m-votes');
       var yes = h('button.yes', { type: 'button', 'aria-label': 'Vote ' + (p.name || 'player'), html: ICON.check });
       var no = h('button.no', { type: 'button', 'aria-label': 'Cancel', html: ICON.cross });
       var card = h('div.m-card', { role: 'listitem', tabindex: '-1' }, [
-        crew,
+        h('span.m-av', null, [crew, spkBadge()]),
         h('span.xmark', { html: ICON.xmark }),
         h('div.m-info', null, [name, votes]),
         h('div.m-badges', null, [h('span.b-voted', { text: 'I voted' }), h('span.b-caller', { title: 'Called the meeting', html: ICON.megaphone })]),
@@ -1315,6 +1472,7 @@
     var byColor = d.by ? colorKey(d.by) : -99;
     var res = d.phase === 'result';
     var votes = d.votes || {};
+    var top = listTop(d.players);
     (d.players || []).forEach(function (p) {
       var c = S.cards[p.slot];
       if (!c) return;
@@ -1328,8 +1486,10 @@
       el.classList.toggle('sel', vote && S.selected === p.slot);
       el.setAttribute('tabindex', vote && p.alive ? '0' : '-1');
       txt(c.name, p.name || 'Player');
-      var csig = p.color + '|' + (p.alive ? 1 : 0);
-      if (c.crewSig !== csig) { c.crewSig = csig; paintCrew(c.crew, 52, p.color, {}); }
+      el.classList.toggle('speaking', !!p.speaking);
+      var hat = cleanHat(p.hat);
+      var csig = p.color + '|' + (p.alive ? 1 : 0) + '|' + hat + '|' + top;
+      if (c.crewSig !== csig) { c.crewSig = csig; paintAvatar(c.crew, 52, 52, p.color, { hat: hat, top: top }); }
       voterIcons(c.votes, res ? votes[String(p.slot)] : null, c);
     });
     // skip
@@ -1367,12 +1527,12 @@
     if (!w || !hh) return;
     var ctx = sizeCanvas(cv, w, hh);
     ctx.clearRect(0, 0, w, hh);
-    var sc = Math.min(hh / 64, 3.2);
+    var sc = Math.min(hh / (64 + (-58 - hatTop(d.by && d.by.hat))), 3.2);
     if (d.body) {
-      drawCrew(ctx, w * 0.33, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1 });
+      drawCrew(ctx, w * 0.33, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1, hat: d.by ? cleanHat(d.by.hat) : 0 });
       drawCrew(ctx, w * 0.72, hh * 0.97, d.body.color, { scale: sc * 0.95, facing: -1, dead: true });
     } else {
-      drawCrew(ctx, w * 0.5, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1 });
+      drawCrew(ctx, w * 0.5, hh * 0.97, d.by ? d.by.color : 0, { scale: sc, facing: 1, hat: d.by ? cleanHat(d.by.hat) : 0 });
     }
   }
   function showMeeting(d) {
@@ -1451,15 +1611,15 @@
           E.roleSub.appendChild(h('span.c', { text: p.name || 'Player' }));
         });
       } else E.roleSub.textContent = 'Sabotage and kill everyone.';
-      people = (d.impostors || []).map(function (p) { return { color: p.color, name: p.name, isMe: (p.color | 0) === myColor }; });
-      if (!people.some(function (p) { return p.isMe; })) people.push({ color: myColor, name: S.name, isMe: true });
+      people = (d.impostors || []).map(function (p) { return { color: p.color, name: p.name, hat: p.hat, isMe: (p.color | 0) === myColor }; });
+      if (!people.some(function (p) { return p.isMe; })) people.push({ color: myColor, name: S.name, hat: S.hat, isMe: true });
     } else {
       E.roleSub.appendChild(document.createTextNode('There ' + (count === 1 ? 'is ' : 'are ')));
       E.roleSub.appendChild(h('b', { text: count + ' Impostor' + (count === 1 ? '' : 's') }));
       E.roleSub.appendChild(document.createTextNode(' among us'));
       var lp = (d.players) || (S.lobby && S.lobby.players) || [];
-      people = lp.map(function (p) { return { color: p.color, name: p.name, isMe: !!p.isMe }; });
-      if (!people.length) people = [{ color: myColor, name: S.name, isMe: true }];
+      people = lp.map(function (p) { return { color: p.color, name: p.name, hat: p.hat, isMe: !!p.isMe }; });
+      if (!people.length) people = [{ color: myColor, name: S.name, hat: S.hat, isMe: true }];
     }
     E.role.classList.add('on');
     var paint = function () { drawLineup(E.roleCv, people, { names: true }); };
@@ -1479,7 +1639,7 @@
     d = d || {};
     var text = String(d.text || (d.name ? d.name + ' was ejected.' : 'No one was ejected.'));
     var lines = text.split('\n');
-    S.eject = { t: 0, color: (d.color != null && d.color >= 0 && d.name) ? d.color : -1, main: lines[0], sub: lines.slice(1).join('\n'), shown: -1, rot: Math.random() * 6 };
+    S.eject = { t: 0, color: (d.color != null && d.color >= 0 && d.name) ? d.color : -1, hat: cleanHat(d.hat), main: lines[0], sub: lines.slice(1).join('\n'), shown: -1, rot: Math.random() * 6 };
     E.ejectTxt.textContent = '';
     E.eject.classList.add('on');
     later('eject', 6000, hideEjection);
@@ -1498,7 +1658,7 @@
       var x = -80 + (w + 160) * p, y = hh * 0.4 + Math.sin(ej.t * 1.3) * 16;
       var sc = clamp(Math.min(w, hh) / 300, 1.1, 2.2);
       ctx.save(); ctx.translate(x, y); ctx.rotate(ej.rot + ej.t * 1.6);
-      drawCrew(ctx, 0, 28 * sc, ej.color, { scale: sc, facing: 1, noShadow: true });
+      drawCrew(ctx, 0, 28 * sc, ej.color, { scale: sc, facing: 1, noShadow: true, hat: ej.hat });
       ctx.restore();
     }
     // typewriter
@@ -1545,7 +1705,7 @@
     if (REASONS[w][r]) r = REASONS[w][r];
     txt(E.overReason, r);
     var winners = (d.players || []).filter(function (p) { return (w === 'imp') === isImp(p.role); })
-      .map(function (p) { return { color: p.color, name: p.name, ghost: p.alive === false || p.alive === 0, isMe: (p.color | 0) === S.myColor || !!p.isMe }; });
+      .map(function (p) { return { color: p.color, name: p.name, hat: p.hat, ghost: p.alive === false || p.alive === 0, isMe: (p.color | 0) === S.myColor || !!p.isMe }; });
     show(E.againBtn, !!d.isHost);
     show(E.overWait, !d.isHost);
     E.over.classList.add('on');
@@ -1593,12 +1753,12 @@
     if (name === 'menu') {
       hideOverlays(); hideMeeting();
       clearTimer('menuBusy'); S.menuBusy = false; syncMenuButtons();
-      requestAnimationFrame(function () { E.menuSw.paint(); paintHero(); });
+      requestAnimationFrame(function () { E.menuSw.paint(); paintHero(); if (E.menuHats) { E.menuHats.paint(S.color); E.menuHats.reveal(); } });
     } else if (name === 'lobby') {
       hideOver(); hideEjection(); hideRole(); showSabotageMenu(false);
       S.hudSigs = {};
       if (S.panelOpen == null) setPanelOpen(window.innerWidth > 640);
-      else requestAnimationFrame(function () { E.lobbySw.paint(); });
+      else requestAnimationFrame(paintLobbyPickers);
     } else if (name === 'game') {
       hideOver();
       show(E.exitPop, false);
@@ -1638,7 +1798,8 @@
     for (var k in S.redraw) if (S.redraw[k]) S.redraw[k]();
     if (S.mapOpen) layoutMap();
     if (E.menuSw) E.menuSw.paint();
-    if (E.lobbySw && S.panelOpen) E.lobbySw.paint();
+    if (E.lobbySw && S.panelOpen) paintLobbyPickers();
+    if (E.menuHats && S.screen === 'menu') E.menuHats.paint(S.color);
     if (S.screen === 'menu') paintHero();
   }
 
@@ -1651,11 +1812,13 @@
     var c = parseInt(lsGet('ss_color', ''), 10);
     S.color = (c >= 0 && c < COLORS().length) ? c : (Math.random() * COLORS().length) | 0;
     S.myColor = S.color;
+    S.hat = cleanHat(lsGet('ss_hat', '0'));
     var storedMute = lsGet('ss_muted', null);
     S.muted = storedMute != null ? storedMute === '1' : !!(IS.audio && IS.audio.muted);
     S.tasksCollapsed = window.innerWidth <= 640 || window.innerHeight <= 520;
     try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) S.touch = true; } catch (e) { /* ignore */ }
 
+    injectCss();
     var root = document.getElementById('ui-layer');
     if (!root) { root = h('div#ui-layer'); document.body.appendChild(root); }
     root.textContent = '';
@@ -1672,6 +1835,7 @@
     E.toasts = h('div.toasts', { 'aria-live': 'polite' });
     root.appendChild(E.toasts);
     E.menuSw.set(S.color, null);
+    setMyHat(S.hat); S.hatAt = 0;
     if (S.touch) document.body.classList.add('is-touch');
     if (S.muted) fire('onMute', true);
     syncMute();
@@ -1696,7 +1860,7 @@
       if (b) setTimeout(function () { if (document.activeElement === b) b.blur(); }, 0);
     }, true);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { onResize(); }).catch(function () { /* ignore */ });
-    requestAnimationFrame(function () { paintHero(); E.menuSw.paint(); });
+    requestAnimationFrame(function () { paintHero(); E.menuSw.paint(); if (E.menuHats) { E.menuHats.paint(S.color); E.menuHats.reveal(); } });
     requestAnimationFrame(loop);
   }
 
@@ -1721,7 +1885,8 @@
     setMapView: setMapView,
     getStick: function () { return { x: S.stick.x, y: S.stick.y }; },
     isTyping: isTyping,
-    profile: function () { return { name: currentName(), color: S.color }; },
+    profile: function () { return { name: currentName(), color: S.color, hat: S.hat }; },
+    hat: function () { return S.hat; },
     _state: S
   };
 })();

@@ -864,18 +864,41 @@
       c.beginPath(); c.arc(4, -42, 3.6, Math.PI * 1.1, Math.PI * 2.5); c.stroke();
       ell(c, 8, 2, 13, 4); c.fillStyle = 'rgba(160,20,30,0.55)'; c.fill();
     }
+    // hat: above the body (inside the facing / bob / ghost transform), below name tags
+    if (opts.hat && !dead && !opts.noHat && IS.hats && IS.hats.draw) {
+      IS.hats.draw(c, opts.hat, { facing: f, ghost: ghost, time: t, walk: walking ? opts.walk : undefined, color: main, dark: dark });
+    }
+    c.restore();
+  }
+  function hatIdx(h) { return IS.hats && IS.hats.valid ? IS.hats.valid(h) : 0; }
+  function hatAnimated(h) { return !!(h && IS.hats && IS.hats.animated && IS.hats.animated(h)); }
+  // highest painted point of a crewmate wearing hat h (crew coords, unscaled)
+  function hatTop(h) { return h && IS.hats && IS.hats.top ? IS.hats.top(h) : -58; }
+  // Hat only, with exactly the transform drawCrewmate would use (for animated hats over cached sprites)
+  function drawHatLive(c, x, y, colorIdx, opts) {
+    var h = hatIdx(opts.hat);
+    if (!h || opts.dead || !IS.hats || !IS.hats.draw) return;
+    var cc = col(colorIdx), f = opts.facing < 0 ? -1 : 1, ghost = !!opts.ghost;
+    var t = opts.time !== undefined ? opts.time : performance.now() / 1000;
+    var walking = typeof opts.walk === 'number' && !ghost;
+    var bob = walking ? -Math.abs(Math.sin(opts.walk * TAU)) * 2 : 0;
+    c.save();
+    c.translate(x, y); c.scale(f, 1);
+    if (ghost) { c.globalAlpha *= 0.5; c.translate(0, -8); }
+    c.translate(0, bob);
+    IS.hats.draw(c, h, { facing: f, ghost: ghost, time: t, walk: walking ? opts.walk : undefined, color: cc[1], dark: cc[2] });
     c.restore();
   }
 
   // Cached crewmate sprites (per colour / facing / walk frame / ghost wave frame) for the world view.
-  var CREW_W = 84, CREW_H = 108, CREW_OX = 42, CREW_OY = 88;
-  function crewSprite(color, facing, frame, ghost, dead, outline, S) {
-    var key = 'crew|' + color + '|' + facing + '|' + frame + '|' + (ghost ? 1 : 0) + (dead ? 1 : 0) + '|' + (outline || '');
+  var CREW_W = 84, CREW_H = 136, CREW_OX = 42, CREW_OY = 116;
+  function crewSprite(color, facing, frame, ghost, dead, outline, S, hat) {
+    var key = 'crew|' + color + '|' + facing + '|' + frame + '|' + (ghost ? 1 : 0) + (dead ? 1 : 0) + '|' + (outline || '') + '|h' + (hat || 0);
     var sp = sprites.get(key);
     if (sp) return sp;
     var cv = mk(CREW_W * S, CREW_H * S), c = cv.getContext('2d');
     c.scale(S, S);
-    var o = { facing: facing, dead: dead, ghost: ghost, outline: outline, noBob: true };
+    var o = { facing: facing, dead: dead, ghost: ghost, outline: outline, noBob: true, hat: hat || 0 };
     if (ghost) o.time = frame / 8 * (TAU / 6);
     else if (frame >= 0) o.walk = frame / 8;
     drawCrewmate(c, CREW_OX, CREW_OY, color, o);
@@ -887,8 +910,10 @@
     var ghost = !!opts.ghost, frame = -1, dy = 0;
     if (ghost) { frame = Math.floor(((opts.time || 0) * 6 / TAU) * 8) % 8; dy = Math.sin((opts.time || 0) * 2.2) * 3; }
     else if (typeof opts.walk === 'number') frame = Math.floor(opts.walk * 8) % 8;
-    var sp = crewSprite(color | 0, opts.facing < 0 ? -1 : 1, frame, ghost, !!opts.dead, opts.outline || '', S);
+    var hat = opts.dead ? 0 : hatIdx(opts.hat), live = hatAnimated(hat);
+    var sp = crewSprite(color | 0, opts.facing < 0 ? -1 : 1, frame, ghost, !!opts.dead, opts.outline || '', S, live ? 0 : hat);
     c.drawImage(sp.c, x - CREW_OX, y - CREW_OY + dy, CREW_W, CREW_H);
+    if (live) drawHatLive(c, x, y + dy, color, { hat: hat, facing: opts.facing, ghost: ghost, time: opts.time, walk: frame >= 0 && !ghost ? frame / 8 : undefined });
   }
 
   // ------------------------------------------------------------------------------------------
@@ -1249,7 +1274,7 @@
         blitCrew(ctx, pl2.x, pl2.y, pl2.color, {
           facing: pl2.f, ghost: !!pl2.ghost || pl2.alive === false,
           walk: pl2.m ? (typeof pl2.walk === 'number' ? ((pl2.walk % 1) + 1) % 1 : ((t * 2.3 + (pl2.slot || 0) * 0.37) % 1)) : undefined,
-          time: t + (pl2.slot || 0), outline: tgt ? '#ff3b4a' : null
+          time: t + (pl2.slot || 0), outline: tgt ? '#ff3b4a' : null, hat: pl2.hat
         }, S);
       }
     }
@@ -1270,14 +1295,17 @@
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.lineJoin = 'round';
       visPlayers.forEach(function (pl) {
-        if (!pl.name) return;
-        var yy = pl.y - (pl.ghost || pl.alive === false ? 74 : 66);
+        var yy = nameY(pl);
+        if (!pl.name) { if (pl.speaking) drawSpeaking(ctx, pl.x, yy - fsz * 0.35, fsz, t); return; }
         ctx.lineWidth = 3.5 / zoom * 1.6;
         ctx.strokeStyle = 'rgba(8,10,20,0.85)';
         ctx.strokeText(pl.name, pl.x, yy);
         ctx.fillStyle = pl.role === 1 ? '#ff3b4a' : (pl.ghost || pl.alive === false) ? 'rgba(232,236,255,0.65)' : '#ffffff';
         ctx.fillText(pl.name, pl.x, yy);
+        if (pl.speaking) drawSpeaking(ctx, pl.x + ctx.measureText(pl.name).width / 2 + fsz * 0.85, yy - fsz * 0.35, fsz, t);
       });
+    } else {
+      visPlayers.forEach(function (pl) { if (pl.speaking) drawSpeaking(ctx, pl.x, nameY(pl) - 8, 14, t); });
     }
 
     // markers & edge arrows
@@ -1308,6 +1336,30 @@
     });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
+  }
+  // name tag baseline for a world player: above the head, and above a tall hat
+  function nameY(pl) {
+    var ghost = pl.ghost || pl.alive === false;
+    var top = Math.min(-58, hatTop(hatIdx(pl.hat)));
+    return pl.y + Math.min(-66, top - 7) - (ghost ? 8 : 0);
+  }
+  // little animated speaker + sound waves, centred at (x, y), sized to the name font
+  function drawSpeaking(c, x, y, sz, t) {
+    var s = sz / 16;
+    c.save();
+    c.translate(x, y); c.scale(s, s);
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    ell(c, 2, 0, 12.5, 11); c.fillStyle = 'rgba(8,10,20,0.78)'; c.fill();
+    c.strokeStyle = '#3ee07a'; c.lineWidth = 2; c.stroke();
+    c.beginPath();
+    c.moveTo(-6, -3); c.lineTo(-3, -3); c.lineTo(1.5, -7); c.lineTo(1.5, 7); c.lineTo(-3, 3); c.lineTo(-6, 3); c.closePath();
+    c.fillStyle = '#ffffff'; c.fill();
+    for (var i = 0; i < 2; i++) {
+      var a = 0.45 + 0.55 * Math.max(0, Math.sin(t * 9 - i * 1.1));
+      c.beginPath(); c.arc(1.5, 0, 4.5 + i * 3.6, -0.75, 0.75);
+      c.strokeStyle = 'rgba(62,224,122,' + a.toFixed(2) + ')'; c.lineWidth = 1.9; c.stroke();
+    }
+    c.restore();
   }
   function drawArrowHead(x, y, ang, color, s) {
     ctx.setTransform(s, 0, 0, s, x, y);
