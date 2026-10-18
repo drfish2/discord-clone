@@ -786,8 +786,17 @@
     c.quadraticCurveTo(1, -9, -15, -13);
     c.closePath();
   }
+  // Leg: square top (tucked under the body), fully rounded foot, outer edge tapering slightly.
   function legPath(c, x, lift) {
-    rr(c, x, -20 - lift, 13, 20, 6);
+    var w = 13, top = -22 - lift, bot = -lift, r = 6.5;
+    c.beginPath();
+    c.moveTo(x, top);
+    c.lineTo(x + w, top);
+    c.bezierCurveTo(x + w + 0.6, bot - 12, x + w, bot - r - 1, x + w, bot - r);
+    c.arc(x + w - r, bot - r, r, 0, Math.PI / 2);
+    c.lineTo(x + r, bot);
+    c.arc(x + r, bot - r, r, Math.PI / 2, Math.PI);
+    c.closePath();
   }
   function packPath(c, dead) { if (dead) rr(c, -24, -29, 13, 12, 4); else rr(c, -24, -47, 13, 27, 5); }
   function visorPath(c) { rr(c, -1, -48, 23, 15, 7.5); }
@@ -835,7 +844,10 @@
     if (!ghost) {
       c.save(); c.translate(db, 0); legPath(c, -14, lb); c.fillStyle = dark; c.fill(); c.restore();
       c.save(); c.translate(dfr, 0); legPath(c, 3, lf); c.fillStyle = main; c.fill();
-      c.fillStyle = dark; c.fillRect(3, -4 - lf, 13, 4); c.restore();
+      // shaded sole, clipped to the rounded leg so the foot stays round
+      c.clip();
+      ell(c, 9.5, 1.5 - lf, 10, 5.5); c.fillStyle = dark; c.fill();
+      c.restore();
     }
     // body with shadow side
     if (ghost) ghostPath(c, t); else if (dead) deadPath(c); else bodyPath(c);

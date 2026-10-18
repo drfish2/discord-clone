@@ -5017,8 +5017,17 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     c.quadraticCurveTo(1, -9, -15, -13);
     c.closePath();
   }
+  // Leg: square top (tucked under the body), fully rounded foot, outer edge tapering slightly.
   function legPath(c, x, lift) {
-    rr(c, x, -20 - lift, 13, 20, 6);
+    var w = 13, top = -22 - lift, bot = -lift, r = 6.5;
+    c.beginPath();
+    c.moveTo(x, top);
+    c.lineTo(x + w, top);
+    c.bezierCurveTo(x + w + 0.6, bot - 12, x + w, bot - r - 1, x + w, bot - r);
+    c.arc(x + w - r, bot - r, r, 0, Math.PI / 2);
+    c.lineTo(x + r, bot);
+    c.arc(x + r, bot - r, r, Math.PI / 2, Math.PI);
+    c.closePath();
   }
   function packPath(c, dead) { if (dead) rr(c, -24, -29, 13, 12, 4); else rr(c, -24, -47, 13, 27, 5); }
   function visorPath(c) { rr(c, -1, -48, 23, 15, 7.5); }
@@ -5066,7 +5075,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!ghost) {
       c.save(); c.translate(db, 0); legPath(c, -14, lb); c.fillStyle = dark; c.fill(); c.restore();
       c.save(); c.translate(dfr, 0); legPath(c, 3, lf); c.fillStyle = main; c.fill();
-      c.fillStyle = dark; c.fillRect(3, -4 - lf, 13, 4); c.restore();
+      // shaded sole, clipped to the rounded leg so the foot stays round
+      c.clip();
+      ell(c, 9.5, 1.5 - lf, 10, 5.5); c.fillStyle = dark; c.fill();
+      c.restore();
     }
     // body with shadow side
     if (ghost) ghostPath(c, t); else if (dead) deadPath(c); else bodyPath(c);
@@ -10513,11 +10525,13 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
   var LS_PTT = 'starship-sus/voice-ptt';
   var SMOOTH = 0.07; // s, gain time constant
+  var TALK_LEVEL = 0.02, TALK_HANG = 400; // RMS above which a voice counts as speaking; hold (ms)
   var AUDIO_OPTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
   var S = {
     room: null, name: null, handlers: [],
-    ctx: null, remotes: new Map(), // identity -> {track, stream, el, src, gain, pan, tg, tp}
+    ctx: null, remotes: new Map(), // identity -> {track, stream, el, src, gain, pan, an, loud, tg, tp}
+    local: null, // {mst, src, an, loud} level meter on my own microphone
     micWanted: false, micOn: false, micBusy: false, micErr: false,
     ptt: false, keyHeld: false, ptrHeld: false,
     dock: null, btn: null, mode: null, lastUi: ''
@@ -10550,7 +10564,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var old = S.remotes.get(peer);
     if (old && old.track === track) return;
     if (old) removeRemote(peer);
-    var R = { track: track, stream: null, el: null, src: null, gain: null, pan: null, tg: -1, tp: 0 };
+    var R = { track: track, stream: null, el: null, src: null, gain: null, pan: null, an: null, loud: 0, tg: -1, tp: 0 };
     var c = ensureCtx();
     try {
       R.stream = new MediaStream([track.mediaStreamTrack]);
@@ -10566,6 +10580,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         R.gain = c.createGain();
         R.gain.gain.value = 0;
         R.src.connect(R.gain);
+        R.an = meter(c, R.src);
         if (c.createStereoPanner) { R.pan = c.createStereoPanner(); R.gain.connect(R.pan); R.pan.connect(c.destination); }
         else R.gain.connect(c.destination);
       } else {
@@ -10587,10 +10602,59 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     if (!R) return;
     S.remotes.delete(peer);
     try { if (R.src) R.src.disconnect(); } catch (e) { /* ignore */ }
+    try { if (R.an) R.an.disconnect(); } catch (e) { /* ignore */ }
     try { if (R.gain) R.gain.disconnect(); } catch (e) { /* ignore */ }
     try { if (R.pan) R.pan.disconnect(); } catch (e) { /* ignore */ }
     try { if (R.el) { R.el.pause(); R.el.srcObject = null; } } catch (e) { /* ignore */ }
   }
+
+  // ---- speaking detection: LiveKit's server-side flag OR a local level meter (faster, and works
+  // for voices the server's detector misses)
+  var levelBuf = null;
+  function meter(c, src) {
+    try {
+      var an = c.createAnalyser();
+      an.fftSize = 512;
+      src.connect(an);
+      return an;
+    } catch (e) { return null; }
+  }
+  function loud(an) {
+    if (!an) return false;
+    if (!levelBuf || levelBuf.length !== an.fftSize) levelBuf = new Float32Array(an.fftSize);
+    an.getFloatTimeDomainData(levelBuf);
+    var sum = 0;
+    for (var i = 0; i < levelBuf.length; i++) sum += levelBuf[i] * levelBuf[i];
+    return Math.sqrt(sum / levelBuf.length) > TALK_LEVEL;
+  }
+  function localMicTrack() {
+    var lp = S.room && S.room.localParticipant;
+    if (!lp || !S.micOn) return null;
+    try {
+      var src = (LK().Track && LK().Track.Source && LK().Track.Source.Microphone) || 'microphone';
+      var pub = lp.getTrackPublication ? lp.getTrackPublication(src) : null;
+      return (pub && pub.track && pub.track.mediaStreamTrack) || null;
+    } catch (e) { return null; }
+  }
+  function dropLocal() {
+    var L = S.local;
+    S.local = null;
+    if (!L) return;
+    try { L.src.disconnect(); } catch (e) { /* ignore */ }
+  }
+  function meterLocal(t) {
+    var mst = localMicTrack(), c = S.ctx;
+    if (!c || !mst) { if (S.local && !mst) dropLocal(); return; }
+    if (!S.local || S.local.mst !== mst) {
+      dropLocal();
+      try {
+        var src = c.createMediaStreamSource(new MediaStream([mst]));
+        S.local = { mst: mst, src: src, an: meter(c, src), loud: 0 };
+      } catch (e) { S.local = null; return; }
+    }
+    if (loud(S.local.an)) S.local.loud = t;
+  }
+  function now() { return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now(); }
 
   function settingsFar() {
     var C = IS.CONFIG || {};
@@ -10608,16 +10672,18 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   function mix(view) {
     var near = ((IS.CONFIG && IS.CONFIG.TILE) || 48) * 2;
     var opts = { near: near, far: Math.max(settingsFar(), near + 48), los: los };
-    var c = S.ctx, now = c ? c.currentTime : 0;
+    var c = S.ctx, at = c ? c.currentTime : 0, t0 = now();
+    meterLocal(t0);
     S.remotes.forEach(function (R, peer) {
+      if (R.an && loud(R.an)) R.loud = t0;
       var t = target(view, peer, opts);
       if (Math.abs(t.g - R.tg) > 0.004) {
         if (R.gain) {
-          if (R.tg < 0) R.gain.gain.value = t.g; else R.gain.gain.setTargetAtTime(t.g, now, SMOOTH);
+          if (R.tg < 0) R.gain.gain.value = t.g; else R.gain.gain.setTargetAtTime(t.g, at, SMOOTH);
         } else if (R.el) R.el.volume = Math.max(0, Math.min(1, t.g));
         R.tg = t.g;
       }
-      if (R.pan && Math.abs(t.p - R.tp) > 0.01) { R.pan.pan.setTargetAtTime(t.p, now, SMOOTH); R.tp = t.p; }
+      if (R.pan && Math.abs(t.p - R.tp) > 0.01) { R.pan.pan.setTargetAtTime(t.p, at, SMOOTH); R.tp = t.p; }
     });
   }
 
@@ -10666,6 +10732,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         if (p && p.catch) p.catch(noop);
       } catch (e) { /* ignore */ }
     }
+    dropLocal();
     S.room = null; S.name = null; S.micOn = false; S.micBusy = false;
     S.keyHeld = false; S.ptrHeld = false;
     showDock(false);
@@ -10867,15 +10934,18 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   }
   function localSpeaking() {
     var lp = S.room && S.room.localParticipant;
-    return !!(lp && lp.isSpeaking);
+    if (!lp || !S.micOn) return false;
+    return !!lp.isSpeaking || !!(S.local && now() - S.local.loud < TALK_HANG);
   }
   function isSpeaking(peer) {
     if (!S.room || !peer) return false;
-    var p = participant(peer);
-    if (!p || !p.isSpeaking) return false;
-    if (p === S.room.localParticipant) return S.micOn;
+    var lp = S.room.localParticipant;
+    if (lp && lp.identity === peer) return localSpeaking();
     var R = S.remotes.get(peer);
-    return !!(R && R.tg > 0.05); // never reveal voices this player cannot hear
+    if (!R || R.tg <= 0.05) return false; // never reveal voices this player cannot hear
+    if (now() - R.loud < TALK_HANG) return true;
+    var p = participant(peer);
+    return !!(p && p.isSpeaking);
   }
 
   // ------------------------------------------------------------------ per-frame entry point
