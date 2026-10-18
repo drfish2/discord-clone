@@ -239,11 +239,12 @@
       drawCrew(ctx, x, y, sl.p.color, { scale: sc, facing: sl.k > 0 ? -1 : 1, ghost: !!sl.p.ghost });
       ctx.restore();
       if (o.names && sl.p.name) {
-        var fs = clamp(Math.round(sc * 6), 12, 18);
+        var fs = clamp(Math.round(Math.min(sc * 6, spacing * 0.26)), 9, 18);
+        var maxCh = Math.max(3, Math.floor(spacing * 0.98 / (fs * 0.56)));
         ctx.font = '500 ' + fs + 'px Rubik, system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
         ctx.lineWidth = 4; ctx.strokeStyle = '#050814'; ctx.lineJoin = 'round';
-        var label = sl.p.name.length > 12 ? sl.p.name.slice(0, 11) + '…' : sl.p.name;
+        var label = sl.p.name.length > Math.min(12, maxCh) ? sl.p.name.slice(0, Math.min(12, maxCh) - 1) + '…' : sl.p.name;
         ctx.strokeText(label, x, y + 8); ctx.fillStyle = sl.p.isMe ? '#ffcc33' : '#ffffff'; ctx.fillText(label, x, y + 8);
       }
     }
@@ -472,7 +473,7 @@
     E.menuSw = makeSwatches(pickMenuColor);
     E.hostBtn = h('button.ui-btn.ui-btn--big.ui-btn--block', { type: 'button', html: ICON.rocket + '<span>Host Game</span>' });
     E.hostBtn.addEventListener('click', doHost);
-    E.codeIn = h('input.ui-input', { type: 'text', maxlength: '4', placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Game code', enterkeyhint: 'go', inputmode: 'text' });
+    E.codeIn = h('input.ui-input', { type: 'text', placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Game code', enterkeyhint: 'go', inputmode: 'text' });
     E.codeIn.addEventListener('input', function () {
       var v = filterCode(E.codeIn.value);
       if (E.codeIn.value !== v) E.codeIn.value = v;
@@ -1625,7 +1626,7 @@
     S.myColor = S.color;
     var storedMute = lsGet('ss_muted', null);
     S.muted = storedMute != null ? storedMute === '1' : !!(IS.audio && IS.audio.muted);
-    S.tasksCollapsed = window.innerWidth <= 640;
+    S.tasksCollapsed = window.innerWidth <= 640 || window.innerHeight <= 520;
     try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) S.touch = true; } catch (e) { /* ignore */ }
 
     var root = document.getElementById('ui-layer');

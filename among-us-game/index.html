@@ -230,6 +230,7 @@ kbd{display:inline-block;min-width:26px;padding:3px 7px;border-radius:7px;backgr
 .set-note{margin:10px 2px 0;font-size:13px;color:var(--ink-3)}
 .lobby-bottom{position:absolute;right:calc(var(--sar) + var(--gut));bottom:calc(var(--sab) + 18px);display:flex;flex-direction:column;align-items:flex-end;gap:6px;pointer-events:none}
 .lobby-bottom > *{pointer-events:auto}
+.lobby-panel:has(~ .lobby-bottom:not(.is-hidden) .start-hint:not(.is-hidden)){bottom:calc(var(--sab) + 130px)}
 .start-btn{min-width:220px}
 .start-hint{font-size:13px;color:var(--ink-2);background:rgba(5,8,20,.75);padding:4px 10px;border-radius:8px}
 .wait-pill{position:absolute;left:50%;bottom:calc(var(--sab) + 22px);transform:translateX(-50%);padding:12px 22px;border-radius:999px;
@@ -354,7 +355,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 .sab-tile:disabled{filter:grayscale(1) brightness(.6);cursor:not-allowed}
 .sab-note{margin:12px 2px 0;font-size:13px;color:var(--ink-3);text-align:center}
 .map-card{width:min(1000px,100%);max-height:100%;padding:16px;display:flex;flex-direction:column;animation:popin .25s ease-out}
-.map-wrap{position:relative;flex:1;min-height:0;border-radius:14px;overflow:hidden;background:#060a18;border:3px solid var(--outline)}
+.map-wrap{position:relative;align-self:center;flex:1;min-height:0;border-radius:14px;overflow:hidden;background:#060a18;border:3px solid var(--outline)}
 .map-wrap canvas{width:100%;height:100%}
 .map-fallback{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-3)}
 
@@ -454,7 +455,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 /* role reveal */
 .ov-role{z-index:50;background:#000;flex-direction:column;justify-content:flex-start;overflow:hidden}
 .role-glow{position:absolute;left:50%;bottom:-20%;width:140%;height:70%;transform:translateX(-50%);border-radius:50%;
-  background:radial-gradient(closest-side,rgba(82,224,255,.32),transparent);pointer-events:none}
+  background:radial-gradient(closest-side,rgba(82,224,255,.32),transparent);pointer-events:none;z-index:0}
 .ov-role.imp .role-glow{background:radial-gradient(closest-side,rgba(255,59,74,.38),transparent)}
 .role-shh{position:relative;margin-top:max(8vh,calc(var(--sat) + 40px));font:700 clamp(16px,2.5vw,22px) var(--font-display);letter-spacing:.3em;color:var(--ink-3);text-transform:uppercase;animation:fadein .5s both}
 .role-title{position:relative;margin:6px 0 0;font:700 clamp(56px,13vw,140px)/1 var(--font-display);color:var(--cyan);text-shadow:0 0 30px rgba(82,224,255,.6),0 8px 0 #0a3a4a;
@@ -464,7 +465,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 .role-sub{position:relative;margin:10px 16px 0;font-size:clamp(16px,2.6vw,22px);color:var(--ink);text-align:center;animation:fadein .6s .8s both}
 .role-sub b{color:var(--danger-2);font-weight:700}
 .role-sub .c{color:var(--danger);font-weight:700}
-.role-cv{position:relative;flex:1;width:100%;min-height:0;animation:fadein .8s 1s both}
+.role-cv{position:relative;z-index:1;flex:1;width:100%;min-height:0;animation:fadein .8s 1s both}
 
 /* ejection */
 .ov-eject{z-index:50;background:#000;overflow:hidden}
@@ -496,7 +497,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 @keyframes toastOut{to{transform:translateY(-10px);opacity:0}}
 
 /* ===================================================================== responsive */
-@media (max-width:860px){
+@media (max-width:860px) and (min-height:521px), (max-width:640px){
   .menu-wrap{grid-template-columns:minmax(0,1fr);gap:20px;align-items:start;padding-top:calc(var(--sat) + 18px)}
   .menu-hero{align-items:center;text-align:center}
   .logo{justify-content:center}
@@ -567,7 +568,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   .m-card .xmark{width:40px;height:40px;margin-top:-20px;left:5px}
   .m-name{font-size:14px}
   .m-card.me .m-name::after{content:""}
-  .b-voted{font-size:8px;padding:2px 4px;letter-spacing:0}
+  .m-badges{position:absolute;top:-7px;right:-5px;z-index:1}
+  .b-voted{font-size:9px;padding:2px 5px;letter-spacing:0}
+  .m-card.caller.voted .b-caller{display:none}
   .b-caller svg{width:20px;height:20px}
   .yes,.no{width:34px;height:34px;border-radius:10px}
   .m-card.sel .m-info{display:none}
@@ -576,8 +579,33 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   .m-chat{width:100%}
   .over-actions .ui-btn{flex:1}
 }
+@media (max-width:1100px){ .lobby-hint{display:none} }
 @media (max-height:520px){
   .logo-crew{width:96px;height:96px}
+  .logo-text .l1{font-size:40px}
+  .logo-text .l2{font-size:72px}
+  .menu-wrap{gap:18px 24px;padding-top:calc(var(--sat) + 16px)}
+  .lobby-bottom{flex-direction:row;align-items:center;gap:10px}
+  .lobby-panel:has(~ .lobby-bottom:not(.is-hidden) .start-hint:not(.is-hidden)){bottom:calc(var(--sab) + 84px)}
+  .ui-btn--big{min-height:54px;font-size:20px}
+  .act .act-lbl{font-size:9px;letter-spacing:-.02em}
+  .act .act-cd{font-size:28px;border-radius:17px}
+  .menu-wrap{padding-right:calc(var(--sar) + 74px)}
+  .m-head{padding:6px 10px 6px 14px}
+  .m-title{font-size:20px}
+  .m-grid{gap:6px;padding:8px}
+  .m-card{min-height:48px;padding:4px 8px 4px 5px;gap:8px;border-radius:13px}
+  .m-crew{width:38px;height:38px}
+  .m-card .xmark{width:38px;height:38px;margin-top:-19px;left:5px}
+  .m-name{font-size:14px}
+  .m-foot{padding:6px 10px}
+  .tablet{padding:6px;border-radius:22px}
+  .sab-card{width:min(780px,100%);padding:12px}
+  .sab-grid{grid-template-columns:repeat(4,1fr);gap:8px}
+  .sab-tile{padding:12px 6px 10px}
+  .role-title{font-size:min(13vw,22vh)}
+  .over-title{font-size:min(14vw,20vh)}
+  .over-actions{padding-bottom:calc(var(--sab) + 14px)}
   .hud-actions{gap:6px}
   .act{width:64px;height:64px;border-radius:20px}
   .act--use{width:76px;height:76px}
@@ -586,6 +614,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   .tasks-body{max-height:30vh}
   .role-shh{margin-top:3vh}
   .over-title{margin-top:3vh}
+}
+@media (max-height:520px) and (min-width:700px){
+  .m-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}

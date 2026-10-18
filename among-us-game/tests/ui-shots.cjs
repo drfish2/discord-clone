@@ -12,7 +12,7 @@ const scenes = [
   ['meeting-discuss', 2600], ['meeting-vote', 2600], ['chat', 600], ['meeting-result', 3400],
   ['eject', 2600], ['eject-skip', 2600], ['over-win', 2200], ['over-lose', 2200],
 ];
-const sizes = [['desk', { width: 1280, height: 800 }, false], ['phone', { width: 390, height: 844 }, true]];
+const sizes = [['desk', { width: 1280, height: 800 }, false], ['phone', { width: 390, height: 844 }, true], ['land', { width: 844, height: 390 }, true]].filter(s => !process.env.SIZES || process.env.SIZES.split(',').includes(s[0]));
 (async () => {
 const browser = await chromium.launch();
 for (const [tag, viewport, mobile] of sizes) {
