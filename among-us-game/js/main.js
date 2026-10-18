@@ -34,6 +34,7 @@
   function play(k, o) { if (IS.audio && IS.audio.play) IS.audio.play(k, o); }
   function st() { return IS.client && IS.client.state ? IS.client.state() : null; }
   function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+  function speaking(peer) { return !!(peer && IS.voice && IS.voice.isSpeaking && IS.voice.isSpeaking(peer)); }
   function colorName(i) { return (C.COLORS[i] || C.COLORS[0])[0]; }
   function playerBySlot(s, slot) {
     if (!s || slot < 0) return null;
@@ -308,12 +309,12 @@
   var handlers = {
     onCreate: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.create({ name: o.name, color: o.color }).then(function () { enterGame(); })
+      IS.client.create({ name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) { toast('Could not host: ' + (e && e.message || e)); });
     },
     onJoin: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.join({ code: o.code, name: o.name, color: o.color }).then(function () { enterGame(); })
+      IS.client.join({ code: o.code, name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) {
           var m = e && e.message || String(e);
           toast(m === 'not_found' ? 'No game with that code.' : m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
@@ -321,7 +322,7 @@
     },
     onFreeplay: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.create({ name: o.name, color: o.color, free: 1 }).then(function () {
+      IS.client.create({ name: o.name, color: o.color, hat: o.hat, free: 1 }).then(function () {
         enterGame();
         toast('Freeplay: pick a map in Settings, then press Start.');
       }).catch(function (e) { toast('Could not start freeplay: ' + (e && e.message || e)); });
@@ -329,6 +330,7 @@
     onStart: function () { IS.client.act('start'); },
     onSettings: function (set) { IS.client.act('set', set); },
     onColor: function (i) { IS.client.act('col', i); },
+    onHat: function (i) { if (IS.client.setHat) IS.client.setHat(i); },
     onLeave: function () { leaveGame(); },
     onAgain: function () { IS.client.act('again'); },
     onUse: doUse,
@@ -392,7 +394,7 @@
       var imps = [];
       for (var i = 0; i < s.players.length; i++) {
         var o = s.players[i];
-        if (o.role === 1 && (p && p.role === 1)) imps.push({ name: o.name, color: o.color });
+        if (o.role === 1 && (p && p.role === 1)) imps.push({ name: o.name, color: o.color, hat: o.hat });
       }
       var count = 0;
       if (s.hs && s.hs.pl) for (var k = 0; k < s.hs.pl.length; k++) if (s.hs.pl[k][3] === 1) count++;
@@ -426,7 +428,7 @@
       var w = s.hs.wn || { t: 'crew', r: 'tasks' };
       var mp = myPlayer(s);
       var youWon = !!mp && ((w.t === 'imp') === (mp.role === 1));
-      var pls = s.players.map(function (o) { return { name: o.name, color: o.color, role: o.role, alive: o.alive }; });
+      var pls = s.players.map(function (o) { return { name: o.name, color: o.color, hat: o.hat, role: o.role, alive: o.alive }; });
       IS.ui.showGameOver({ winner: w.t, reason: reasonText(w), youWon: youWon, players: pls, isHost: IS.client.isHost() });
       play(youWon ? 'win' : 'lose');
     }
@@ -454,15 +456,15 @@
     var players = s.players.map(function (o) {
       var v = mt.vt ? mt.vt[o.slot] : -2;
       return {
-        slot: o.slot, name: o.name, color: o.color, isMe: o.isMe,
+        slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe, speaking: speaking(o.peer),
         alive: (!!o.alive || (ph === 'result' && !!s.hs.ej && s.hs.ej.s === o.slot)) && o.conn !== 0,
         voted: v !== -2 && v !== undefined, canVote: ph === 'vote' && !!(p && p.alive) && mine === -2 && !!o.alive,
         caller: o.slot === mt.by
       };
     });
     var view = {
-      by: by ? { name: by.name, color: by.color } : { name: '?', color: 0 },
-      body: body ? { name: body.name, color: body.color } : null,
+      by: by ? { name: by.name, color: by.color, hat: by.hat } : { name: '?', color: 0 },
+      body: body ? { name: body.name, color: body.color, hat: body.hat } : null,
       players: players, phase: ph, remain: remain, myVote: mine,
       canVote: ph === 'vote' && !!(p && p.alive) && mine === -2
     };
@@ -498,7 +500,7 @@
       text = name + (ej.imp ? ' was An Impostor.' : ' was not An Impostor.');
       if (ej.left != null) text += '\n' + ej.left + ' Impostor' + (ej.left === 1 ? '' : 's') + ' remain' + (ej.left === 1 ? 's' : '') + '.';
     } else text = name + ' was ejected.';
-    return { name: name, color: p ? p.color : 0, text: text };
+    return { name: name, color: p ? p.color : 0, hat: p ? p.hat : 0, text: text };
   }
 
   // ---------------------------------------------------------------- per-frame
@@ -585,7 +587,7 @@
 
   function lobbyState(s) {
     var players = s.players.map(function (o) {
-      return { slot: o.slot, name: o.name, color: o.color, isMe: o.isMe, isHost: o.isHost };
+      return { slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe, isHost: o.isHost, speaking: speaking(o.peer) };
     });
     var n = s.players.filter(function (o) { return o.conn !== 0; }).length;
     return {
@@ -609,7 +611,7 @@
         players.push({
           slot: o.slot, peer: o.peer, x: isMe ? me.x : o.x, y: isMe ? me.y : o.y,
           f: isMe ? me.f : o.f, m: isMe ? me.m : o.m, walk: isMe ? walkPhase : undefined,
-          color: o.color, alive: !!o.alive || phase(s) === 'lobby', name: o.name,
+          color: o.color, hat: o.hat, speaking: speaking(o.peer), alive: !!o.alive || phase(s) === 'lobby', name: o.name,
           role: (imp || isMe) ? o.role : undefined, ghost: ghost, inVent: isMe ? !!me.vt : !!o.vt, isMe: isMe
         });
       }
@@ -645,6 +647,20 @@
       lights: !!(s && sab(s) && sab(s).k === 'lights'),
       highlight: hl, taskTargets: tt, sabotageTargets: sbt,
       showNames: true, time: t / 1000, phase: inGame ? phase(s) : 'menu'
+    };
+  }
+
+  // What the voice module needs to mix proximity audio (see SPEC.md §4.9)
+  function voiceView(s) {
+    if (!inGame || !s) return { inGame: false };
+    var p = myPlayer(s);
+    return {
+      inGame: true, code: s.code, phase: phase(s),
+      me: { peer: IS.client.me(), x: me.x, y: me.y, alive: phase(s) === 'lobby' || !!(p && p.alive), spectator: !p },
+      players: s.players.map(function (o) {
+        return { peer: o.peer, x: o.isMe ? me.x : o.x, y: o.isMe ? me.y : o.y, alive: phase(s) === 'lobby' || !!o.alive,
+          conn: o.conn !== 0, inVent: o.isMe ? !!me.vt : !!o.vt, isMe: o.isMe };
+      })
     };
   }
 
@@ -730,6 +746,9 @@
       var view = renderView(s, t);
       try { IS.render.frame(view); } catch (e) { if (!frame._err) { frame._err = 1; console.error(e); } }
       if (mapOpen && IS.ui.setMapView) IS.ui.setMapView(view);
+    }
+    if (IS.voice && IS.voice.update) {
+      try { IS.voice.update(voiceView(s)); } catch (e) { if (!frame._verr) { frame._verr = 1; console.error(e); } }
     }
   }
 

@@ -195,7 +195,7 @@
   }
 
   function fullPresence() {
-    S.pres = { v: 1, n: S.name, c: S.color, j: S.j, x: 0, y: 0, f: 1, m: 0, vt: 0, fx: '', a: [], ch: [] };
+    S.pres = { v: 1, n: S.name, c: S.color, ht: S.hat | 0, j: S.j, x: 0, y: 0, f: 1, m: 0, vt: 0, fx: '', a: [], ch: [] };
     S.presVer++;
     safePresence(S.room, S.pres);
   }
@@ -216,6 +216,7 @@
     return boot().then(waitReady).then(function () {
       if (S.room) leave();
       var name = cleanName(opts.name) || 'Player', color = clampColor(opts.color);
+      S.hat = clampHat(opts.hat);
       var avoid = Object.create(null);
       for (var i = 0; i < S.games.length; i++) avoid[S.games[i].code] = 1;
       var code = genCode(avoid);
@@ -271,6 +272,7 @@
         throw new Error('full');
       }
       var name = cleanName(opts.name) || 'Player', color = clampColor(opts.color);
+      S.hat = clampHat(opts.hat);
       attachRoom(r.room, code, name, color);
       var maxJ = 0, ps = r.room.peers();
       for (var i = 0; i < ps.length; i++) {
@@ -423,6 +425,13 @@
     return null;
   }
 
+  // cosmetic hat index (IS.HATS); lives only in presence, the host never sees it
+  function clampHat(h) { return isInt(h) && h >= 0 && h < 64 ? h : 0; }
+  function setHat(h) {
+    S.hat = clampHat(h);
+    if (S.room && S.pres) setPres({ ht: S.hat });
+  }
+
   function act(type) {
     if (!S.room || typeof type !== 'string' || !S.pres) return 0;
     syncSeq();
@@ -563,7 +572,7 @@
         slot: i, peer: e[0], name: S.names[e[0]] || 'Player', color: e[1], alive: !!e[2],
         role: known ? e[3] : 0, roleKnown: known, conn: e[6], x: lp.x, y: lp.y, f: lp.f,
         m: pr && pr.m === 1 ? 1 : 0, vt: pr && pr.vt === 1 ? 1 : 0, fx: pr && typeof pr.fx === 'string' ? pr.fx.slice(0, 8) : '',
-        isMe: isMe, isHost: e[0] === S.hostPeer,
+        isMe: isMe, isHost: e[0] === S.hostPeer, hat: pr && isInt(pr.ht) ? clampHat(pr.ht) : (isMe ? S.hat | 0 : 0),
         done: IS.host.popcount(e[4] & ((1 << e[5]) - 1)), total: e[5], present: !!pr
       });
     }
@@ -620,6 +629,8 @@
     state: state,
     now: function () { return Date.now() + (S.amHost ? 0 : S.offset); },
     setSelf: setSelf,
+    setHat: setHat,
+    hat: function () { return S.hat | 0; },
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },

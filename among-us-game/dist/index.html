@@ -1070,6 +1070,14 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 })();
 
 </script>
+<script>/* js/hats.js */
+/* placeholder: being written */
+
+</script>
+<script>/* js/net-livekit.js */
+/* placeholder: being written */
+
+</script>
 <script>/* js/net.js */
 /* Starship Sus — transport. See SPEC.md §3.
  * IS.net normalises the claude.ai artifact `room` capability (presence only) and a
@@ -2183,7 +2191,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   }
 
   function fullPresence() {
-    S.pres = { v: 1, n: S.name, c: S.color, j: S.j, x: 0, y: 0, f: 1, m: 0, vt: 0, fx: '', a: [], ch: [] };
+    S.pres = { v: 1, n: S.name, c: S.color, ht: S.hat | 0, j: S.j, x: 0, y: 0, f: 1, m: 0, vt: 0, fx: '', a: [], ch: [] };
     S.presVer++;
     safePresence(S.room, S.pres);
   }
@@ -2204,6 +2212,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     return boot().then(waitReady).then(function () {
       if (S.room) leave();
       var name = cleanName(opts.name) || 'Player', color = clampColor(opts.color);
+      S.hat = clampHat(opts.hat);
       var avoid = Object.create(null);
       for (var i = 0; i < S.games.length; i++) avoid[S.games[i].code] = 1;
       var code = genCode(avoid);
@@ -2259,6 +2268,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         throw new Error('full');
       }
       var name = cleanName(opts.name) || 'Player', color = clampColor(opts.color);
+      S.hat = clampHat(opts.hat);
       attachRoom(r.room, code, name, color);
       var maxJ = 0, ps = r.room.peers();
       for (var i = 0; i < ps.length; i++) {
@@ -2411,6 +2421,13 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     return null;
   }
 
+  // cosmetic hat index (IS.HATS); lives only in presence, the host never sees it
+  function clampHat(h) { return isInt(h) && h >= 0 && h < 64 ? h : 0; }
+  function setHat(h) {
+    S.hat = clampHat(h);
+    if (S.room && S.pres) setPres({ ht: S.hat });
+  }
+
   function act(type) {
     if (!S.room || typeof type !== 'string' || !S.pres) return 0;
     syncSeq();
@@ -2551,7 +2568,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         slot: i, peer: e[0], name: S.names[e[0]] || 'Player', color: e[1], alive: !!e[2],
         role: known ? e[3] : 0, roleKnown: known, conn: e[6], x: lp.x, y: lp.y, f: lp.f,
         m: pr && pr.m === 1 ? 1 : 0, vt: pr && pr.vt === 1 ? 1 : 0, fx: pr && typeof pr.fx === 'string' ? pr.fx.slice(0, 8) : '',
-        isMe: isMe, isHost: e[0] === S.hostPeer,
+        isMe: isMe, isHost: e[0] === S.hostPeer, hat: pr && isInt(pr.ht) ? clampHat(pr.ht) : (isMe ? S.hat | 0 : 0),
         done: IS.host.popcount(e[4] & ((1 << e[5]) - 1)), total: e[5], present: !!pr
       });
     }
@@ -2608,6 +2625,8 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     state: state,
     now: function () { return Date.now() + (S.amHost ? 0 : S.offset); },
     setSelf: setSelf,
+    setHat: setHat,
+    hat: function () { return S.hat | 0; },
     act: act,
     chat: chat,
     votes: function () { return IS.host.votes(S.hs); },
@@ -9261,6 +9280,10 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 })();
 
 </script>
+<script>/* js/voice.js */
+/* placeholder: being written */
+
+</script>
 <script>/* js/main.js */
 /* Starship Sus — game loop and glue between client, map, render, tasks and ui. See SPEC.md §4.8. */
 (function () {
@@ -9298,6 +9321,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   function play(k, o) { if (IS.audio && IS.audio.play) IS.audio.play(k, o); }
   function st() { return IS.client && IS.client.state ? IS.client.state() : null; }
   function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+  function speaking(peer) { return !!(peer && IS.voice && IS.voice.isSpeaking && IS.voice.isSpeaking(peer)); }
   function colorName(i) { return (C.COLORS[i] || C.COLORS[0])[0]; }
   function playerBySlot(s, slot) {
     if (!s || slot < 0) return null;
@@ -9572,12 +9596,12 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
   var handlers = {
     onCreate: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.create({ name: o.name, color: o.color }).then(function () { enterGame(); })
+      IS.client.create({ name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) { toast('Could not host: ' + (e && e.message || e)); });
     },
     onJoin: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.join({ code: o.code, name: o.name, color: o.color }).then(function () { enterGame(); })
+      IS.client.join({ code: o.code, name: o.name, color: o.color, hat: o.hat }).then(function () { enterGame(); })
         .catch(function (e) {
           var m = e && e.message || String(e);
           toast(m === 'not_found' ? 'No game with that code.' : m === 'full' ? 'That game is full.' : 'Could not join: ' + m);
@@ -9585,7 +9609,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     },
     onFreeplay: function (o) {
       IS.audio && IS.audio.unlock && IS.audio.unlock();
-      IS.client.create({ name: o.name, color: o.color, free: 1 }).then(function () {
+      IS.client.create({ name: o.name, color: o.color, hat: o.hat, free: 1 }).then(function () {
         enterGame();
         toast('Freeplay: pick a map in Settings, then press Start.');
       }).catch(function (e) { toast('Could not start freeplay: ' + (e && e.message || e)); });
@@ -9593,6 +9617,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     onStart: function () { IS.client.act('start'); },
     onSettings: function (set) { IS.client.act('set', set); },
     onColor: function (i) { IS.client.act('col', i); },
+    onHat: function (i) { if (IS.client.setHat) IS.client.setHat(i); },
     onLeave: function () { leaveGame(); },
     onAgain: function () { IS.client.act('again'); },
     onUse: doUse,
@@ -9656,7 +9681,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       var imps = [];
       for (var i = 0; i < s.players.length; i++) {
         var o = s.players[i];
-        if (o.role === 1 && (p && p.role === 1)) imps.push({ name: o.name, color: o.color });
+        if (o.role === 1 && (p && p.role === 1)) imps.push({ name: o.name, color: o.color, hat: o.hat });
       }
       var count = 0;
       if (s.hs && s.hs.pl) for (var k = 0; k < s.hs.pl.length; k++) if (s.hs.pl[k][3] === 1) count++;
@@ -9690,7 +9715,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       var w = s.hs.wn || { t: 'crew', r: 'tasks' };
       var mp = myPlayer(s);
       var youWon = !!mp && ((w.t === 'imp') === (mp.role === 1));
-      var pls = s.players.map(function (o) { return { name: o.name, color: o.color, role: o.role, alive: o.alive }; });
+      var pls = s.players.map(function (o) { return { name: o.name, color: o.color, hat: o.hat, role: o.role, alive: o.alive }; });
       IS.ui.showGameOver({ winner: w.t, reason: reasonText(w), youWon: youWon, players: pls, isHost: IS.client.isHost() });
       play(youWon ? 'win' : 'lose');
     }
@@ -9718,15 +9743,15 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var players = s.players.map(function (o) {
       var v = mt.vt ? mt.vt[o.slot] : -2;
       return {
-        slot: o.slot, name: o.name, color: o.color, isMe: o.isMe,
+        slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe, speaking: speaking(o.peer),
         alive: (!!o.alive || (ph === 'result' && !!s.hs.ej && s.hs.ej.s === o.slot)) && o.conn !== 0,
         voted: v !== -2 && v !== undefined, canVote: ph === 'vote' && !!(p && p.alive) && mine === -2 && !!o.alive,
         caller: o.slot === mt.by
       };
     });
     var view = {
-      by: by ? { name: by.name, color: by.color } : { name: '?', color: 0 },
-      body: body ? { name: body.name, color: body.color } : null,
+      by: by ? { name: by.name, color: by.color, hat: by.hat } : { name: '?', color: 0 },
+      body: body ? { name: body.name, color: body.color, hat: body.hat } : null,
       players: players, phase: ph, remain: remain, myVote: mine,
       canVote: ph === 'vote' && !!(p && p.alive) && mine === -2
     };
@@ -9762,7 +9787,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       text = name + (ej.imp ? ' was An Impostor.' : ' was not An Impostor.');
       if (ej.left != null) text += '\n' + ej.left + ' Impostor' + (ej.left === 1 ? '' : 's') + ' remain' + (ej.left === 1 ? 's' : '') + '.';
     } else text = name + ' was ejected.';
-    return { name: name, color: p ? p.color : 0, text: text };
+    return { name: name, color: p ? p.color : 0, hat: p ? p.hat : 0, text: text };
   }
 
   // ---------------------------------------------------------------- per-frame
@@ -9849,7 +9874,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
 
   function lobbyState(s) {
     var players = s.players.map(function (o) {
-      return { slot: o.slot, name: o.name, color: o.color, isMe: o.isMe, isHost: o.isHost };
+      return { slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe, isHost: o.isHost, speaking: speaking(o.peer) };
     });
     var n = s.players.filter(function (o) { return o.conn !== 0; }).length;
     return {
@@ -9873,7 +9898,7 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
         players.push({
           slot: o.slot, peer: o.peer, x: isMe ? me.x : o.x, y: isMe ? me.y : o.y,
           f: isMe ? me.f : o.f, m: isMe ? me.m : o.m, walk: isMe ? walkPhase : undefined,
-          color: o.color, alive: !!o.alive || phase(s) === 'lobby', name: o.name,
+          color: o.color, hat: o.hat, speaking: speaking(o.peer), alive: !!o.alive || phase(s) === 'lobby', name: o.name,
           role: (imp || isMe) ? o.role : undefined, ghost: ghost, inVent: isMe ? !!me.vt : !!o.vt, isMe: isMe
         });
       }
@@ -9909,6 +9934,20 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       lights: !!(s && sab(s) && sab(s).k === 'lights'),
       highlight: hl, taskTargets: tt, sabotageTargets: sbt,
       showNames: true, time: t / 1000, phase: inGame ? phase(s) : 'menu'
+    };
+  }
+
+  // What the voice module needs to mix proximity audio (see SPEC.md §4.9)
+  function voiceView(s) {
+    if (!inGame || !s) return { inGame: false };
+    var p = myPlayer(s);
+    return {
+      inGame: true, code: s.code, phase: phase(s),
+      me: { peer: IS.client.me(), x: me.x, y: me.y, alive: phase(s) === 'lobby' || !!(p && p.alive), spectator: !p },
+      players: s.players.map(function (o) {
+        return { peer: o.peer, x: o.isMe ? me.x : o.x, y: o.isMe ? me.y : o.y, alive: phase(s) === 'lobby' || !!o.alive,
+          conn: o.conn !== 0, inVent: o.isMe ? !!me.vt : !!o.vt, isMe: o.isMe };
+      })
     };
   }
 
@@ -9994,6 +10033,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
       var view = renderView(s, t);
       try { IS.render.frame(view); } catch (e) { if (!frame._err) { frame._err = 1; console.error(e); } }
       if (mapOpen && IS.ui.setMapView) IS.ui.setMapView(view);
+    }
+    if (IS.voice && IS.voice.update) {
+      try { IS.voice.update(voiceView(s)); } catch (e) { if (!frame._verr) { frame._verr = 1; console.error(e); } }
     }
   }
 

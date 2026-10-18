@@ -5,8 +5,8 @@ no build step for development, no ES modules**. Every file in `js/` is a classic
 an IIFE that attaches its public API to the global namespace `window.IS`
 (`window.IS = window.IS || {}` at the top of each file).
 
-Script load order (index.html): `config.js, assets.js, net.js, host.js, client.js, map.js,
-render.js, maps/*.js, tasks.js, ui.js, main.js`. A module may only *call* other modules at runtime (inside
+Script load order (index.html): `config.js, assets.js, hats.js, net-livekit.js, net.js, host.js,
+client.js, map.js, render.js, maps/*.js, tasks.js, ui.js, voice.js, main.js`. A module may only *call* other modules at runtime (inside
 functions), never at load time, except for reading `IS.CONFIG`.
 
 For release, `tools/build.mjs` inlines everything (scripts, CSS, and assets as data URIs) into one
@@ -317,3 +317,32 @@ Dark space theme (single dark look by design): deep navy `#0b1020`, panel `#151c
 accent amber `#ffcc33`, danger `#ff3b4a`, crew-cyan `#52e0ff`. Display font: Google Fonts
 "Russo One" (fallback `system-ui, sans-serif`); body font "Rubik". Chunky rounded buttons with
 thick dark outlines, like a cartoon space game. Everything must work at 400px phone width.
+
+---------------------------------------------------------------------------------------------------
+## 6. Hats (cosmetic)
+`IS.HATS` (hats.js) = `[{id, name}]`, index 0 = no hat. `IS.hats.draw(ctx, idx, opts)` paints hat
+`idx` in crewmate-local coordinates (the same space `drawCrewmate` uses: feet at 0,0, facing right,
+head top around y = -58); `drawCrewmate(..., {hat})` calls it. A player's hat is presence field
+`ht` (int); `IS.client.setHat(i)`, `IS.client.hat()`, and `players[].hat` in `state()`. The host
+never stores hats. UI: `onCreate/onJoin/onFreeplay` payloads carry `hat`; `handlers.onHat(i)` in
+the lobby. Every view main.js passes to ui.js that has `{name, color}` also has `hat`.
+
+## 7. Self-hosted build: LiveKit multiplayer + voice
+The claude.ai artifact cannot use the microphone or WebRTC, so voice exists only in the
+self-hosted build (`node tools/build.mjs --selfhost`), served by the Discord clone's Next.js app
+at `/among-us`. That build sets `window.SS_LIVEKIT = {tokenUrl}` and inlines livekit-client.
+
+* `IS.lkTransport` (net-livekit.js): when `window.SS_LIVEKIT` is set and the claude room is not
+  available, `IS.net.init()` uses LiveKit rooms as the transport (`IS.net.mode === 'livekit'`):
+  presence is emulated over LiveKit data messages with the same Room-like API as §3. The lobby is
+  LiveKit room `ss-lobby`; game rooms are `ss-<code>`. LiveKit identity = `IS.net.myPeer`.
+* `IS.voice` (voice.js): mic + proximity mixing on the game room's LiveKit connection.
+  `IS.voice.update(view)` is called by main.js every frame with
+  `{inGame, code, phase, me: {peer, x, y, alive, spectator}, players: [{peer, x, y, alive, conn, inVent, isMe}]}`;
+  `IS.voice.isSpeaking(peer)` → bool (main.js passes it to ui.js as `speaking` on lobby and meeting
+  players and to render.js on world players). Inert (no UI, no errors) when SS_LIVEKIT is unset.
+  Rules: lobby and meetings: everyone hears everyone at full volume (dead players: in meetings the
+  living can't hear ghosts). Play: alive players hear alive players by distance (full volume within
+  ~2 tiles, silent beyond the crew vision radius) and only with line of sight
+  (`IS.map.lineOfSight`); impostors in vents are muted to others; ghosts hear everyone, but only
+  ghosts hear ghosts. Over: everyone hears everyone.
