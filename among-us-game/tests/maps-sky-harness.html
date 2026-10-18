@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky Map Harness</title>
+<base href="/">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1020; overflow: hidden; }
+  #game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #mini { position: fixed; inset: 5% 5%; width: 90%; height: 90%; display: none; }
+  #hud { position: fixed; left: 8px; top: 8px; color: #e8ecff; font: 12px monospace; background: rgba(0,0,0,.5); padding: 4px 8px; }
+</style>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+<canvas id="mini"></canvas>
+<div id="hud"></div>
+<script src="js/config.js"></script>
+<script>
+  // assets.js is optional (?assets=1)
+  if (/[?&]assets=1/.test(location.search)) document.write('<script src="js/assets.js"><\/script>');
+</script>
+<script src="js/map.js"></script>
+<script src="js/render.js"></script>
+<script src="js/maps/sky.js"></script>
+<script>IS.map.select("sky");</script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var canvas = document.getElementById('game-canvas');
+  IS.render.init(canvas);
+  var M = IS.map, T = M.TILE;
+  var scenes = {
+    cafeteria: { x: 73.5 * T, y: 36 * T }, launchpad: { x: 9 * T, y: 31 * T }, decon: { x: 25 * T, y: 30 * T },
+    lockers: { x: 38 * T, y: 29 * T }, hub: { x: 49.5 * T, y: 31 * T }, lab: { x: 28 * T, y: 11 * T },
+    reactor: { x: 11 * T, y: 11 * T }, greenhouse: { x: 47.5 * T, y: 11 * T }, office: { x: 66 * T, y: 9 * T },
+    admin: { x: 81 * T, y: 11 * T }, comms: { x: 63 * T, y: 21 * T }, medbay: { x: 39 * T, y: 46 * T },
+    storage: { x: 53 * T, y: 51 * T }, balcony: { x: 72 * T, y: 50 * T }
+  };
+  var sc = scenes[q.get('scene')] || scenes.cafeteria;
+  var me = { x: sc.x, y: sc.y, slot: 0, alive: q.get('ghost') !== '1', role: +(q.get('role') || 0), color: 0 };
+  var others = [];
+  var names = ['Nova', 'Kip', 'Juno', 'Rex', 'Pip', 'Zed', 'Mars', 'Echo', 'Lux', 'Ivy', 'Bo'];
+  for (var i = 1; i <= 9; i++) {
+    var a = i / 9 * Math.PI * 2;
+    var px = me.x + Math.cos(a) * (120 + 40 * (i % 3)), py = me.y + Math.sin(a) * (110 + 30 * (i % 2));
+    var r = M.moveCircle(me.x, me.y, px - me.x, py - me.y, 16);
+    others.push({ slot: i, peer: 'p' + i, x: r.x, y: r.y, f: i % 2 ? 1 : -1, m: i % 3 === 0 ? 1 : 0, color: i, alive: i !== 7, name: names[i],
+      ghost: i === 7, role: (me.role === 1 && i === 4) ? 1 : undefined });
+  }
+  var bodies = [{ slot: 11, x: me.x + 90, y: me.y + 70, color: 11 }];
+  var keys = {};
+  addEventListener('keydown', function (e) { keys[e.key] = 1; if (e.key === 'm') mini.style.display = mini.style.display === 'block' ? 'none' : 'block'; });
+  addEventListener('keyup', function (e) { keys[e.key] = 0; });
+  var mini = document.getElementById('mini');
+  if (q.get('mini') === '1') mini.style.display = 'block';
+  var lights = q.get('lights') === '1';
+  var hlType = q.get('hl');
+  var zoomQ = q.get('zoom');
+  var last = performance.now(), facing = 1, moving = 0, t0 = performance.now();
+  var times = [];
+  window.harness = {
+    me: me, others: others, bodies: bodies, times: times,
+    set: function (o) { Object.assign(me, o); },
+    view: function () {
+      var tasks = M.TASKS.slice(0, 6).map(function (t) { return { x: t.x, y: t.y }; });
+      var hl = null;
+      if (hlType) {
+        // nearest of the requested type
+        var best = 1e9;
+        var cand = hlType === 'vent' ? M.vents : hlType === 'button' ? [M.button] : hlType === 'body' ? bodies : hlType === 'fix' ? [].concat(M.FIX.reactor, M.FIX.lights, M.FIX.o2, M.FIX.comms) : M.STATIONS;
+        cand.forEach(function (c) { var d = Math.hypot(c.x - me.x, c.y - me.y); if (d < best) { best = d; hl = { type: hlType, x: c.x, y: c.y }; } });
+      }
+      return {
+        me: me, cam: { x: me.x, y: me.y - 24 }, zoom: zoomQ ? +zoomQ : IS.render.defaultZoom(innerWidth, innerHeight),
+        players: [{ slot: 0, peer: 'me', x: me.x, y: me.y, f: facing, m: moving, color: me.color, alive: me.alive, name: 'Me', role: me.role, ghost: !me.alive, isMe: true }].concat(others),
+        bodies: bodies,
+        vision: !me.alive ? Infinity : lights ? IS.CONFIG.LIGHTS_OUT_VISION : IS.CONFIG.VISION * (me.role === 1 ? 1.5 : 1),
+        lights: lights, highlight: hl,
+        taskTargets: tasks,
+        sabotageTargets: q.get('sab') === '1' ? M.FIX.reactor.map(function (f) { return { x: f.x, y: f.y }; }) : [],
+        showNames: true, time: (performance.now() - t0) / 1000, phase: 'play'
+      };
+    },
+    frame: function () {
+      var a = performance.now();
+      IS.render.frame(harness.view());
+      var b = performance.now();
+      times.push(b - a);
+      if (mini.style.display === 'block') {
+        var dp = devicePixelRatio || 1, w = mini.clientWidth, h = mini.clientHeight;
+        if (mini.width !== Math.round(w * dp)) { mini.width = Math.round(w * dp); mini.height = Math.round(h * dp); }
+        var c = mini.getContext('2d'); c.setTransform(dp, 0, 0, dp, 0, 0); c.clearRect(0, 0, w, h);
+        IS.render.drawMinimap(c, w, h, harness.view());
+      }
+      return b - a;
+    }
+  };
+  function loop(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now;
+    var dx = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), dy = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0);
+    moving = dx || dy ? 1 : 0;
+    if (dx) facing = dx;
+    if (moving) { var l = Math.hypot(dx, dy); var r = M.moveCircle(me.x, me.y, dx / l * 230 * dt, dy / l * 230 * dt, 16); me.x = r.x; me.y = r.y; }
+    var ms = harness.frame();
+    document.getElementById('hud').textContent = 'x ' + Math.round(me.x / T) + ' y ' + Math.round(me.y / T) + ' ' + ((M.roomAt(me.x, me.y) || {}).name || 'hall') + ' | ' + ms.toFixed(2) + ' ms';
+    if (q.get('noloop') !== '1') requestAnimationFrame(loop);
+  }
+  function start() { requestAnimationFrame(loop); }
+  if (window.IS.assets && IS.assets.load) IS.assets.load().then(start, start); else start();
+})();
+</script>
+</body>
+</html>

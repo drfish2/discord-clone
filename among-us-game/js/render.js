@@ -206,7 +206,7 @@
     if (front) {
       var lip = nUp === 1 ? 12 : 0;
       if (lip) { c.fillStyle = WALL_TOP; c.fillRect(px, py, T, lip); }
-      var wim = img('wall');
+      var wim = M().theme && M().theme.wall ? null : img('wall');
       if (wim) {
         c.drawImage(wim, px, py + lip, T, T - lip);
       } else {
@@ -270,9 +270,12 @@
       var lx = (r.x + r.w / 2 + r.label[0]) * T, ly = (r.y + r.h / 2 + r.label[1]) * T;
       if (lx < cx * CHUNK - 400 || lx > (cx + 1) * CHUNK + 400 || ly < cy * CHUNK - 60 || ly > (cy + 1) * CHUNK + 60) return;
       c.font = '30px ' + fontD();
+      var mth = m.theme || {};
+      var tn = (r.tint || (!mth.hall && THEME[r.id]) || mth.hall || THEME.hall)[0];
+      var n = parseInt(tn.slice(1), 16), lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
       c.fillStyle = 'rgba(10,14,30,0.20)';
       c.fillText(r.name.toUpperCase(), lx + 2, ly + 3);
-      c.fillStyle = 'rgba(255,255,255,0.30)';
+      c.fillStyle = lum > 0.68 ? 'rgba(30,40,80,0.30)' : 'rgba(255,255,255,0.30)';
       c.fillText(r.name.toUpperCase(), lx, ly);
     });
     for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) if (cellAt(x, y) === 2) drawWallCell(c, x, y);
@@ -939,9 +942,7 @@
       for (i = 0; i < 400; i++) { c.fillStyle = 'rgba(255,255,255,0.8)'; c.fillRect(hash(i, 21) * N, hash(21, i) * N, 2, 2); }
     } else {
       // high above the clouds
-      var sky = c.createLinearGradient(0, 0, 0, N);
-      sky.addColorStop(0, '#6aa1e0'); sky.addColorStop(1, '#4f80c4');
-      c.fillStyle = sky; c.fillRect(0, 0, N, N);
+      c.fillStyle = '#5d8fd0'; c.fillRect(0, 0, N, N);
       for (i = 0; i < 22; i++) {
         var cx = hash(i, 5) * N, cy = hash(5, i) * N, cw = 50 + hash(i, 8) * 90;
         for (var ex = -N; ex <= N; ex += N) for (var ey = -N; ey <= N; ey += N) {
@@ -1092,7 +1093,7 @@
     sig += '|' + ((M() && M().id) || '') + ':' + ((M() && M().version) || 0);
     if (sig !== assetSig) {
       assetSig = sig;
-      chunks.clear(); sprites.clear(); outlines.clear(); starTile = null; mini.key = '';
+      chunks.clear(); sprites.clear(); outlines.clear(); starTile = null; mini.key = ''; emptyChunk = null;
       applyTheme();
     }
   }
