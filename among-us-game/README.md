@@ -12,6 +12,9 @@ sabotage the ship and pick the crew off one by one.
   `http://localhost:8080`. Outside claude.ai the game falls back to a `BroadcastChannel`
   transport, so the tabs of one browser play together.
 
+* **Self-hosted with voice chat:** the Discord clone's Next.js app serves a second build at
+  `/among-us` that uses LiveKit for both multiplayer and proximity voice (see below).
+
 Controls: WASD / arrow keys to move, `E`/Space to use, `Q` kill, `R` report, `V` vent,
 `Tab` map. On phones you get a joystick and on-screen buttons.
 
@@ -36,9 +39,27 @@ Controls: WASD / arrow keys to move, `E`/Space to use, `Q` kill, `R` report, `V`
   cinematic, and every win condition (tasks, votes, kills, sabotage, disconnects).
 * Host migration: if the host leaves, the next player takes over the running game.
 * Freeplay mode for solo practice on any map.
+* 25 cosmetic hats, picked in the menu or the lobby.
+* Voice chat (self-hosted build only): proximity voice during play, with volume and stereo pan by
+  distance, silence behind walls, and impostors muted in vents. Everyone talks in meetings, ghosts
+  hear everyone but only other ghosts hear them, and talking players get a speaker icon. Open mic
+  or push-to-talk (hold `T`).
 
 ## Code
 
 Vanilla JS, canvas 2D, no dependencies. See [SPEC.md](SPEC.md) for the architecture and the
 network protocol. `node tools/build.mjs` inlines everything (assets as data URIs) into
 `dist/index.html`. Art and sound credits are in [assets/CREDITS.md](assets/CREDITS.md).
+
+## Voice chat (self-hosted)
+
+The claude.ai page can't use the microphone, so voice lives in a separate build:
+
+1. Set `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` and `NEXT_PUBLIC_LIVEKIT_URL` for the Next app
+   (the same variables the Discord clone's voice channels use). LiveKit server 1.12 or newer.
+2. `node among-us-game/tools/build.mjs --selfhost` writes `public/among-us/index.html`.
+3. Run the app and open `/among-us`. Tokens come from the public route `/api/among-us/token`.
+
+Without the Next app: `LIVEKIT_URL=… LIVEKIT_API_KEY=… LIVEKIT_API_SECRET=…
+node among-us-game/tools/voice-dev-server.mjs` serves the game and signs tokens itself.
+The mic needs HTTPS (or localhost).

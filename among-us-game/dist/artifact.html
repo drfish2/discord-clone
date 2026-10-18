@@ -11460,7 +11460,9 @@ body.is-touch .stick-zone.live{display:block;pointer-events:auto}
     var players = s.players.map(function (o) {
       var v = mt.vt ? mt.vt[o.slot] : -2;
       return {
-        slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe, speaking: speaking(o.peer),
+        slot: o.slot, peer: o.peer, name: o.name, color: o.color, hat: o.hat, isMe: o.isMe,
+        // living players must not learn that ghosts are talking
+        speaking: speaking(o.peer) && (!!o.alive || !(p && p.alive)),
         alive: (!!o.alive || (ph === 'result' && !!s.hs.ej && s.hs.ej.s === o.slot)) && o.conn !== 0,
         voted: v !== -2 && v !== undefined, canVote: ph === 'vote' && !!(p && p.alive) && mine === -2 && !!o.alive,
         caller: o.slot === mt.by
