@@ -54,7 +54,6 @@ The ambient loop is a 22 kHz 16-bit WAV, so it loops without gaps.
 |---|---|---|---|
 | click | sfx/click.mp3 | Interface Sounds → `click_001` | — |
 | hover | sfx/hover.mp3 | UI Audio → `rollover2` | quieter |
-| kill | sfx/kill.mp3 | RPG Audio → `knife_slice` + Impact Sounds → `impact_punch_heavy_000` | mixed |
 | body | sfx/body.mp3 | Music Jingles → `Hit jingles/jingles_hit_14` | — |
 | alarm | sfx/alarm.mp3 | Digital Audio → `high_up` + `high_down` | concatenated ×2 (siren) |
 | vote | sfx/vote.mp3 | Interface Sounds → `confirmation_001` | — |
@@ -74,3 +73,15 @@ The ambient loop is a 22 kHz 16-bit WAV, so it loops without gaps.
 
 The UI loads "Russo One" and "Rubik" from Google Fonts. Both are under the SIL Open Font License 1.1. They aren't
 bundled here.
+
+## User-supplied sounds (not open source)
+
+These were supplied by the project owner. Judging by their titles they are sound effects from
+the game Among Us (© Innersloth), so they are not covered by the CC0 licence that applies to the
+Kenney assets above. Replace them before distributing the game if you don't have the rights.
+
+| Key | File | Source | Edits |
+|---|---|---|---|
+| `sab_alarm` | `sfx/sab_alarm.wav` | "Sabotage Alarm Among Us Crisis - Sound Effect for editing" (uploaded) | one 2.0 s period cut for a seamless loop, mono 22 kHz, +7 dB |
+| `kill` | `sfx/kill.mp3` | "Among Us Kill Sound Effect shorts" (uploaded; replaced the Kenney knife/impact mix) | trimmed to 0.95 s with fade-out, mono |
+| `emergency` | `sfx/emergency.mp3` | "Emergency Meeting Call Among us pushing red button - Sound Effect for editing" (uploaded) | leading silence trimmed, 2.1 s with fade-out, mono, +8 dB |

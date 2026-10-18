@@ -361,6 +361,8 @@
 
   function leaveGame() {
     closeTask();
+    if (IS.audio && IS.audio.stopLoop) IS.audio.stopLoop('sab_alarm');
+    lastSabKind = null;
     toggleMap(false);
     if (IS.ui.hideOverlays) IS.ui.hideOverlays();
     if (IS.ui.hideMeeting) IS.ui.hideMeeting();
@@ -411,7 +413,8 @@
     } else if (to === 'meeting') {
       lastMeetingKey = '';
       votedSoundCount = 0;
-      play('alarm');
+      // emergency button vs. body report
+      play(s.hs && s.hs.mt && s.hs.mt.bd < 0 ? 'emergency' : 'alarm');
       showMeetingNow(s, true);
     } else if (to === 'eject') {
       // reveal votes briefly, then ejection cinematic
@@ -711,13 +714,16 @@
 
       // sabotage start / end
       var sb = sab(s);
-      var sk = sb ? sb.k : null;
+      var sk = sb && ph === 'play' ? sb.k : null; // the alarm stops at meetings and game over
       if (sk !== lastSabKind) {
-        if (sk) play('sabotage');
         if (!sk && task && task.fix) closeTask();
         if (IS.audio) {
-          if (sk === 'reactor' || sk === 'o2') IS.audio.loop && IS.audio.loop('alarm');
-          else IS.audio.stopLoop && IS.audio.stopLoop('alarm');
+          // critical sabotages keep the alarm going until fixed; lights/comms sound it once
+          if (sk === 'reactor' || sk === 'o2') IS.audio.loop && IS.audio.loop('sab_alarm');
+          else {
+            IS.audio.stopLoop && IS.audio.stopLoop('sab_alarm');
+            if (sk) play('sab_alarm');
+          }
         }
         lastSabKind = sk;
       }

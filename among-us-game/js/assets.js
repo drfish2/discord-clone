@@ -38,6 +38,8 @@
       task_step: 'assets/sfx/task_step.mp3',
       vent: 'assets/sfx/vent.mp3',
       sabotage: 'assets/sfx/sabotage.mp3',
+      sab_alarm: 'assets/sfx/sab_alarm.wav',
+      emergency: 'assets/sfx/emergency.mp3',
       win: 'assets/sfx/win.mp3',
       lose: 'assets/sfx/lose.mp3',
       step: 'assets/sfx/step.mp3',
@@ -48,8 +50,8 @@
   });
 
   // Default per-key volume (0..1) and minimum re-trigger interval (ms).
-  var VOLUME = { hover: 0.35, step: 0.3, task_step: 0.6, ambient: 0.32, alarm: 0.55, door: 0.7, eject: 0.9 };
-  var MIN_GAP = { step: 140, hover: 70, click: 40, task_step: 50, alarm: 400, sabotage: 400, body: 300, kill: 200 };
+  var VOLUME = { hover: 0.35, step: 0.3, task_step: 0.6, ambient: 0.32, alarm: 0.55, door: 0.7, eject: 0.9, sab_alarm: 0.6, emergency: 0.85 };
+  var MIN_GAP = { step: 140, hover: 70, click: 40, task_step: 50, alarm: 400, sabotage: 400, sab_alarm: 400, emergency: 400, body: 300, kill: 200 };
   var DEFAULT_GAP = 60;
   var LOAD_TIMEOUT = 8000;
 
